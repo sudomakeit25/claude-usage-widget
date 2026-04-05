@@ -3,6 +3,7 @@ import Charts
 
 struct UsageChartsView: View {
     let sessions: [SessionInfo]
+    @State private var selectedCostDate: Date?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -116,6 +117,20 @@ struct UsageChartsView: View {
                             )
                             .foregroundStyle(Color.green.opacity(0.1).gradient)
                             .interpolationMethod(.catmullRom)
+
+                            if let selected = selectedCostDate,
+                               Calendar.current.isDate(item.date, inSameDayAs: selected) {
+                                PointMark(
+                                    x: .value("Date", item.date, unit: .day),
+                                    y: .value("Cost", item.cost)
+                                )
+                                .foregroundStyle(Color.green)
+                                .symbolSize(60)
+
+                                RuleMark(x: .value("Date", item.date, unit: .day))
+                                    .foregroundStyle(Color.green.opacity(0.3))
+                                    .lineStyle(StrokeStyle(dash: [4, 4]))
+                            }
                         }
                         .chartXAxis {
                             AxisMarks(values: .stride(by: .day, count: 7)) { _ in
@@ -131,13 +146,79 @@ struct UsageChartsView: View {
                                 }
                             }
                         }
+                        .chartOverlay { proxy in
+                            GeometryReader { geo in
+                                Rectangle().fill(.clear).contentShape(Rectangle())
+                                    .onContinuousHover { phase in
+                                        switch phase {
+                                        case .active(let location):
+                                            let origin = geo[proxy.plotFrame!].origin
+                                            let x = location.x - origin.x
+                                            if let date: Date = proxy.value(atX: x) {
+                                                selectedCostDate = Calendar.current.startOfDay(for: date)
+                                            }
+                                        case .ended:
+                                            selectedCostDate = nil
+                                        }
+                                    }
+                            }
+                        }
                         .frame(height: 150)
+
+                        // Tooltip showing sessions for selected date
+                        if let selected = selectedCostDate,
+                           let dayData = dailyCost.first(where: { Calendar.current.isDate($0.date, inSameDayAs: selected) }) {
+                            costTooltip(dayData)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity)
             }
         }
         .padding(20)
+    }
+
+    private func costTooltip(_ dayData: DailyCostItem) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(formatDay(dayData.date))
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(String(format: "$%.2f total", dayData.cost))
+                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.green)
+            }
+
+            ForEach(dayData.sessions.prefix(5), id: \.sessionId) { session in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color.green.opacity(0.5))
+                        .frame(width: 6, height: 6)
+                    Text(String(session.displayTitle.prefix(40)))
+                        .font(.caption2)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(String(format: "$%.2f", session.estimatedCost))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if dayData.sessions.count > 5 {
+                Text("+\(dayData.sessions.count - 5) more")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.1)))
+    }
+
+    private func formatDay(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "EEE, MMM d"
+        return f.string(from: date)
     }
 
     private func statCard(_ title: String, value: String, icon: String) -> some View {
@@ -166,6 +247,7 @@ struct UsageChartsView: View {
     private struct DailyCostItem {
         let date: Date
         let cost: Double
+        let sessions: [SessionInfo]
     }
 
     private struct ToolCount {
@@ -185,7 +267,7 @@ struct UsageChartsView: View {
     private var dailyCost: [DailyCostItem] {
         let calendar = Calendar.current
         let grouped = Dictionary(grouping: sessions) { calendar.startOfDay(for: $0.startTime) }
-        return grouped.map { DailyCostItem(date: $0.key, cost: $0.value.reduce(0) { $0 + $1.estimatedCost }) }
+        return grouped.map { DailyCostItem(date: $0.key, cost: $0.value.reduce(0) { $0 + $1.estimatedCost }, sessions: $0.value.sorted { $0.estimatedCost > $1.estimatedCost }) }
             .sorted { $0.date < $1.date }
             .suffix(30)
             .map { $0 }
