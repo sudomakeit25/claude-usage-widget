@@ -19,12 +19,14 @@ struct SessionInfo: Identifiable, Hashable {
     var isBookmarked: Bool = false
     var isPinned: Bool = false
     var customTitle: String?
+    var liveCostUsd: Double?
 
     var totalMessages: Int { userMessageCount + assistantMessageCount }
     var displayTitle: String { customTitle ?? (firstPrompt.isEmpty ? "Session" : firstPrompt) }
 
-    // Rough API cost estimate (Opus 4.6 rates)
+    // Use live cost if available, otherwise estimate from tokens
     var estimatedCost: Double {
+        if let live = liveCostUsd { return live }
         let inputCost = Double(inputTokens) * 15.0 / 1_000_000
         let outputCost = Double(outputTokens) * 75.0 / 1_000_000
         return inputCost + outputCost
@@ -89,11 +91,18 @@ final class SessionListService: ObservableObject {
             guard let self else { return }
             var sessions = self.loadAllSessions()
 
-            // Merge in active sessions from session-status (may not have meta files yet)
+            // Merge in active sessions and live cost data from session-status
             let activeSessions = self.loadActiveSessions()
+            let liveCosts = self.loadLiveCosts()
             let existingIds = Set(sessions.map { $0.sessionId })
             for active in activeSessions where !existingIds.contains(active.sessionId) {
                 sessions.append(active)
+            }
+            // Apply live costs to existing sessions
+            for i in sessions.indices {
+                if let cost = liveCosts[sessions[i].sessionId] {
+                    sessions[i].liveCostUsd = cost
+                }
             }
 
             sessions.sort { $0.startTime > $1.startTime }
@@ -116,6 +125,33 @@ final class SessionListService: ObservableObject {
                 self.isLoading = false
             }
         }
+    }
+
+    // Load live cost data from session-status files
+    private func loadLiveCosts() -> [String: Double] {
+        let fm = FileManager.default
+        let statusDir = "\(claudeDir)/session-status"
+        guard let files = try? fm.contentsOfDirectory(atPath: statusDir) else { return [:] }
+
+        var costs: [String: Double] = [:]
+        for file in files where file.hasSuffix(".json") {
+            let path = "\(statusDir)/\(file)"
+            guard let data = fm.contents(atPath: path),
+                  let status = try? JSONDecoder().decode(StatusLineData.self, from: data),
+                  let sessionId = status.sessionId,
+                  let cost = status.cost?.totalCostUsd else { continue }
+            costs[sessionId] = cost
+        }
+
+        let rateLimitsPath = "\(claudeDir)/rate-limits.json"
+        if let data = fm.contents(atPath: rateLimitsPath),
+           let status = try? JSONDecoder().decode(StatusLineData.self, from: data),
+           let sessionId = status.sessionId,
+           let cost = status.cost?.totalCostUsd {
+            costs[sessionId] = cost
+        }
+
+        return costs
     }
 
     // Load active sessions from statusline data (for sessions that don't have meta files yet)
