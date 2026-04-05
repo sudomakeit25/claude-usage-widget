@@ -314,7 +314,11 @@ struct SessionBrowserView: View {
                 Divider()
 
                 ScrollView {
-                    UsageChartsView(sessions: sessionService.allSessions)
+                    UsageChartsView(sessions: sessionService.allSessions, onSelectSession: { session in
+                        showCharts = false
+                        selectedSession = session
+                        loadConversation(session)
+                    })
                 }
             }
         } else if let session = selectedSession {

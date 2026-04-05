@@ -3,6 +3,7 @@ import Charts
 
 struct UsageChartsView: View {
     let sessions: [SessionInfo]
+    var onSelectSession: ((SessionInfo) -> Void)?
     @State private var selectedCostDate: Date?
 
     var body: some View {
@@ -190,18 +191,26 @@ struct UsageChartsView: View {
             }
 
             ForEach(dayData.sessions.prefix(5), id: \.sessionId) { session in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color.green.opacity(0.5))
-                        .frame(width: 6, height: 6)
-                    Text(String(session.displayTitle.prefix(40)))
-                        .font(.caption2)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(String(format: "$%.2f", session.estimatedCost))
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                Button(action: { onSelectSession?(session) }) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Color.green.opacity(0.5))
+                            .frame(width: 6, height: 6)
+                        Text(String(session.displayTitle.prefix(40)))
+                            .font(.caption2)
+                            .lineLimit(1)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text(String(format: "$%.2f", session.estimatedCost))
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
 
             if dayData.sessions.count > 5 {
