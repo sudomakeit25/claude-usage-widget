@@ -580,7 +580,7 @@ struct SessionBrowserView: View {
                     activate
                     set newWindow to (create window with default profile)
                     tell current session of newWindow
-                        write text "cd \\"\(dir)\\" && claude --resume \\"\(sessionId)\\""
+                        write text "cd \\"\(dir)\\" && ~/.local/bin/claude --resume \\"\(sessionId)\\""
                     end tell
                 end tell
                 """
@@ -588,7 +588,7 @@ struct SessionBrowserView: View {
             script = """
                 tell application "Terminal"
                     activate
-                    do script "cd \\"\(dir)\\" && claude --resume \\"\(sessionId)\\""
+                    do script "cd \\"\(dir)\\" && ~/.local/bin/claude --resume \\"\(sessionId)\\""
                 end tell
                 """
         }
