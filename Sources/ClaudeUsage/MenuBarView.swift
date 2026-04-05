@@ -10,7 +10,6 @@ struct MenuBarView: View {
                 headerSection
                 Divider().padding(.vertical, 6)
 
-                // Rate limits (account-level)
                 if let limits = service.rateLimits {
                     rateLimitsSection(limits)
                     Divider().padding(.vertical, 6)
@@ -19,29 +18,23 @@ struct MenuBarView: View {
                     Divider().padding(.vertical, 6)
                 }
 
-                // Active sessions
                 if !service.sessions.isEmpty {
                     sessionsSection
                     Divider().padding(.vertical, 6)
                 }
 
-                // Today
                 todaySection
                 Divider().padding(.vertical, 6)
 
-                // This Week
                 weekSection
                 Divider().padding(.vertical, 6)
 
-                // Recent Activity chart
                 chartSection
                 Divider().padding(.vertical, 6)
 
-                // Models
                 modelSection
                 Divider().padding(.vertical, 6)
 
-                // Recent Sessions
                 recentSessionsSection
                 Divider().padding(.vertical, 6)
 
@@ -56,20 +49,28 @@ struct MenuBarView: View {
 
     private var headerSection: some View {
         HStack {
-            Image(systemName: "brain")
-                .font(.title3)
-                .foregroundStyle(.purple)
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    )
+                    .frame(width: 32, height: 32)
+                Image(systemName: "brain")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
+            }
             VStack(alignment: .leading, spacing: 1) {
                 Text("Claude Usage")
                     .font(.headline)
                 Text("Max (5x)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.purple)
             }
             Spacer()
             Button(action: { service.refresh() }) {
                 Image(systemName: "arrow.clockwise")
                     .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
         }
@@ -84,19 +85,19 @@ struct MenuBarView: View {
                 subtitle: "5-hour window",
                 percentage: limits.fiveHour.effectivePercentage,
                 resetText: "Resets in \(limits.fiveHour.timeUntilReset)",
-                color: limitColor(limits.fiveHour.effectivePercentage)
+                gradient: [.orange, .red]
             )
             rateLimitRow(
                 title: "All models",
                 subtitle: "7-day window",
                 percentage: limits.sevenDay.effectivePercentage,
                 resetText: "Resets \(limits.sevenDay.timeUntilReset)",
-                color: limitColor(limits.sevenDay.effectivePercentage)
+                gradient: [.blue, .purple]
             )
         }
     }
 
-    private func rateLimitRow(title: String, subtitle: String, percentage: Int, resetText: String, color: Color) -> some View {
+    private func rateLimitRow(title: String, subtitle: String, percentage: Int, resetText: String, gradient: [Color]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 VStack(alignment: .leading, spacing: 1) {
@@ -104,18 +105,21 @@ struct MenuBarView: View {
                     Text(subtitle).font(.caption2).foregroundStyle(.tertiary)
                 }
                 Spacer()
-                Text("\(percentage)% used")
-                    .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(color)
+                Text("\(percentage)%")
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .foregroundStyle(limitColor(percentage))
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4).fill(Color.gray.opacity(0.15)).frame(height: 8)
-                    RoundedRectangle(cornerRadius: 4).fill(color.gradient)
-                        .frame(width: max(0, geo.size.width * CGFloat(percentage) / 100), height: 8)
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(Color.gray.opacity(0.12))
+                        .frame(height: 10)
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(LinearGradient(colors: gradient, startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(0, geo.size.width * CGFloat(percentage) / 100), height: 10)
                 }
             }
-            .frame(height: 8)
+            .frame(height: 10)
             Text(resetText).font(.caption2).foregroundStyle(.secondary)
         }
     }
@@ -124,41 +128,49 @@ struct MenuBarView: View {
 
     private var sessionsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Active Sessions (\(service.sessions.count))")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+            sectionHeader("Active Sessions", icon: "bolt.fill", color: .green, count: "\(service.sessions.count)")
 
-            ForEach(Array(service.sessions.enumerated()), id: \.offset) { index, session in
+            ForEach(Array(service.sessions.enumerated()), id: \.offset) { _, session in
                 sessionCard(session)
             }
         }
     }
 
     private func sessionCard(_ data: StatusLineData) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
                 if let model = data.model {
-                    Text(model.displayName).font(.caption.weight(.medium))
+                    HStack(spacing: 4) {
+                        Circle().fill(Color.purple).frame(width: 6, height: 6)
+                        Text(model.displayName).font(.caption.weight(.medium))
+                    }
                 }
                 Spacer()
                 if let ctx = data.contextWindow {
-                    Text("ctx \(ctx.usedPercentage)%")
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Circle().fill(ctx.usedPercentage >= 80 ? Color.red : ctx.usedPercentage >= 50 ? Color.orange : Color.green)
-                        .frame(width: 6, height: 6)
+                    HStack(spacing: 4) {
+                        Text("ctx \(ctx.usedPercentage)%")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Circle()
+                            .fill(ctx.usedPercentage >= 80 ? Color.red : ctx.usedPercentage >= 50 ? Color.orange : Color.green)
+                            .frame(width: 6, height: 6)
+                    }
                 }
             }
             if let cwd = data.cwd {
                 HStack(spacing: 4) {
-                    Image(systemName: "folder").font(.system(size: 9)).foregroundStyle(.tertiary)
+                    Image(systemName: "folder").font(.system(size: 9)).foregroundStyle(.blue.opacity(0.7))
                     Text(shortenPath(cwd)).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
             }
             if let cost = data.cost {
                 HStack {
-                    Text("API equiv. \(String(format: "$%.2f", cost.totalCostUsd))")
-                        .font(.system(.caption2, design: .monospaced)).foregroundStyle(.secondary)
+                    Text("API equiv.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(String(format: "$%.2f", cost.totalCostUsd))
+                        .font(.system(.caption2, design: .monospaced).weight(.medium))
+                        .foregroundStyle(.orange)
                     Spacer()
                     if let added = cost.totalLinesAdded, added > 0 {
                         Text("+\(added)").font(.system(.caption2, design: .monospaced)).foregroundStyle(.green)
@@ -169,21 +181,22 @@ struct MenuBarView: View {
                 }
             }
         }
-        .padding(6)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.08)))
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.08)))
     }
 
     // MARK: - Today
 
     private var todaySection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Today").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                StatBadge(icon: "person", value: "\(service.summary.todayUserMessages)", label: "Prompts")
-                StatBadge(icon: "message", value: "\(service.summary.todayMessages)", label: "Messages")
-                StatBadge(icon: "terminal", value: "\(service.summary.todaySessions)", label: "Sessions")
-                StatBadge(icon: "hammer", value: "\(service.summary.todayToolCalls)", label: "Tools")
-                StatBadge(icon: "number", value: formatTokens(service.summary.todayTokens), label: "Tokens")
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Today", icon: "sun.max.fill", color: .yellow)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
+                ColorStatBadge(icon: "person.fill", value: "\(service.summary.todayUserMessages)", label: "Prompts", color: .blue)
+                ColorStatBadge(icon: "message.fill", value: "\(service.summary.todayMessages)", label: "Messages", color: .purple)
+                ColorStatBadge(icon: "terminal.fill", value: "\(service.summary.todaySessions)", label: "Sessions", color: .green)
+                ColorStatBadge(icon: "hammer.fill", value: "\(service.summary.todayToolCalls)", label: "Tools", color: .orange)
+                ColorStatBadge(icon: "number", value: formatTokens(service.summary.todayTokens), label: "Tokens", color: .cyan)
             }
         }
     }
@@ -191,13 +204,13 @@ struct MenuBarView: View {
     // MARK: - This Week
 
     private var weekSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("This Week").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                StatBadge(icon: "person", value: "\(service.summary.weekUserMessages)", label: "Prompts")
-                StatBadge(icon: "message", value: "\(service.summary.weekMessages)", label: "Messages")
-                StatBadge(icon: "terminal", value: "\(service.summary.weekSessions)", label: "Sessions")
-                StatBadge(icon: "number", value: formatTokens(service.summary.weekTokens), label: "Tokens")
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("This Week", icon: "calendar", color: .blue)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                ColorStatBadge(icon: "person.fill", value: "\(service.summary.weekUserMessages)", label: "Prompts", color: .blue)
+                ColorStatBadge(icon: "message.fill", value: "\(service.summary.weekMessages)", label: "Messages", color: .purple)
+                ColorStatBadge(icon: "terminal.fill", value: "\(service.summary.weekSessions)", label: "Sessions", color: .green)
+                ColorStatBadge(icon: "number", value: formatTokens(service.summary.weekTokens), label: "Tokens", color: .cyan)
             }
         }
     }
@@ -206,7 +219,7 @@ struct MenuBarView: View {
 
     private var chartSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Recent Activity").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            sectionHeader("Recent Activity", icon: "chart.bar.fill", color: .purple)
             if service.summary.recentDays.isEmpty {
                 Text("No recent data").font(.caption).foregroundStyle(.tertiary)
             } else {
@@ -219,17 +232,17 @@ struct MenuBarView: View {
 
     private var modelSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Models (All Time)").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            sectionHeader("Models", icon: "cpu.fill", color: .cyan)
             ForEach(
                 service.summary.modelBreakdown.sorted(by: { $0.value.outputTokens > $1.value.outputTokens }),
                 id: \.key
             ) { model, usage in
                 HStack {
                     Circle().fill(modelColor(model)).frame(width: 8, height: 8)
-                    Text(shortModelName(model)).font(.caption)
+                    Text(shortModelName(model)).font(.caption).fontWeight(.medium)
                     Spacer()
                     Text("\(formatTokens(usage.inputTokens + usage.outputTokens)) tokens")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -239,7 +252,7 @@ struct MenuBarView: View {
 
     private var recentSessionsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Recent Sessions").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            sectionHeader("Recent Sessions", icon: "clock.fill", color: .orange)
             ForEach(service.recentSessions.prefix(5)) { session in
                 HStack {
                     VStack(alignment: .leading, spacing: 1) {
@@ -250,7 +263,7 @@ struct MenuBarView: View {
                     }
                     Spacer()
                     Text("\(session.userMessageCount + session.assistantMessageCount) msgs")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(.system(.caption2, design: .monospaced)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -264,23 +277,25 @@ struct MenuBarView: View {
                 .font(.caption2).foregroundStyle(.tertiary)
             Spacer()
             Button(action: openBrowser) {
-                Label("Sessions", systemImage: "bubble.left.and.bubble.right")
-                    .font(.caption)
+                HStack(spacing: 3) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                    Text("Sessions")
+                }
+                .font(.caption)
+                .foregroundStyle(.purple)
             }
             .buttonStyle(.borderless)
             Button("Quit") { NSApplication.shared.terminate(nil) }
-                .buttonStyle(.borderless).font(.caption)
+                .buttonStyle(.borderless).font(.caption).foregroundStyle(.secondary)
         }
     }
-
-    // MARK: - Helpers
 
     // MARK: - Setup Hint
 
     private var setupHint: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: "info.circle")
+                Image(systemName: "info.circle.fill")
                     .foregroundStyle(.blue)
                 Text("Setup Required")
                     .font(.subheadline.weight(.medium))
@@ -294,9 +309,36 @@ struct MenuBarView: View {
             Text("bash Scripts/setup.sh")
                 .font(.system(.caption, design: .monospaced))
                 .padding(6)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color.gray.opacity(0.1)))
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color.blue.opacity(0.08)))
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.blue.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.blue.opacity(0.1)))
+    }
+
+    // MARK: - Section Header
+
+    private func sectionHeader(_ title: String, icon: String, color: Color, count: String? = nil) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.caption2)
+                .foregroundStyle(color)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+            if let count {
+                Text(count)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(color)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(color.opacity(0.12)))
+            }
+            Spacer()
         }
     }
+
+    // MARK: - Helpers
 
     private func limitColor(_ p: Int) -> Color {
         p >= 80 ? .red : p >= 50 ? .orange : .green
@@ -342,22 +384,32 @@ struct MenuBarView: View {
     }
 }
 
-// MARK: - Reusable components
+// MARK: - Colored Stat Badge
 
-struct StatBadge: View {
+struct ColorStatBadge: View {
     let icon: String
     let value: String
     let label: String
+    let color: Color
 
     var body: some View {
-        VStack(spacing: 2) {
-            Image(systemName: icon).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.system(.caption, design: .monospaced).weight(.semibold))
-            Text(label).font(.caption2).foregroundStyle(.tertiary)
+        VStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.caption2)
+                .foregroundStyle(color)
+            Text(value)
+                .font(.system(.caption, design: .rounded).weight(.bold))
+            Text(label)
+                .font(.system(size: 8))
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(color.opacity(0.06)))
     }
 }
+
+// MARK: - Activity Chart
 
 struct ActivityChart: View {
     let days: [DailyActivity]
@@ -368,7 +420,13 @@ struct ActivityChart: View {
             ForEach(days) { day in
                 VStack(spacing: 1) {
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(barColor(day.messageCount, max: maxMessages))
+                        .fill(
+                            LinearGradient(
+                                colors: barColors(day.messageCount, max: maxMessages),
+                                startPoint: .bottom,
+                                endPoint: .top
+                            )
+                        )
                         .frame(width: 14, height: max(2, CGFloat(day.messageCount) / CGFloat(maxMessages) * 50))
                     Text(dayLabel(day.date)).font(.system(size: 7)).foregroundStyle(.tertiary)
                 }
@@ -377,9 +435,11 @@ struct ActivityChart: View {
         }
     }
 
-    private func barColor(_ value: Int, max: Int) -> Color {
+    private func barColors(_ value: Int, max: Int) -> [Color] {
         let ratio = Double(value) / Double(max)
-        return ratio > 0.7 ? .purple : ratio > 0.3 ? .blue : .blue.opacity(0.5)
+        if ratio > 0.7 { return [.purple, .pink] }
+        if ratio > 0.3 { return [.blue, .purple] }
+        return [.blue.opacity(0.4), .blue.opacity(0.6)]
     }
 
     private func dayLabel(_ dateStr: String) -> String {
