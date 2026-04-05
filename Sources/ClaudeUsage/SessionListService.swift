@@ -89,6 +89,15 @@ final class SessionListService: ObservableObject {
             guard let self else { return }
             var sessions = self.loadAllSessions()
 
+            // Merge in active sessions from session-status (may not have meta files yet)
+            let activeSessions = self.loadActiveSessions()
+            let existingIds = Set(sessions.map { $0.sessionId })
+            for active in activeSessions where !existingIds.contains(active.sessionId) {
+                sessions.append(active)
+            }
+
+            sessions.sort { $0.startTime > $1.startTime }
+
             // Apply bookmarks, pins, titles
             for i in sessions.indices {
                 let sid = sessions[i].sessionId
@@ -107,6 +116,49 @@ final class SessionListService: ObservableObject {
                 self.isLoading = false
             }
         }
+    }
+
+    // Load active sessions from statusline data (for sessions that don't have meta files yet)
+    private func loadActiveSessions() -> [SessionInfo] {
+        let fm = FileManager.default
+        let statusDir = "\(claudeDir)/session-status"
+        guard let files = try? fm.contentsOfDirectory(atPath: statusDir) else { return [] }
+
+        var sessions: [SessionInfo] = []
+        let now = Date()
+
+        for file in files where file.hasSuffix(".json") {
+            let path = "\(statusDir)/\(file)"
+            guard let attrs = try? fm.attributesOfItem(atPath: path),
+                  let modDate = attrs[.modificationDate] as? Date,
+                  now.timeIntervalSince(modDate) < 86400,
+                  let data = fm.contents(atPath: path),
+                  let status = try? JSONDecoder().decode(StatusLineData.self, from: data),
+                  let sessionId = status.sessionId else { continue }
+
+            let projectPath = status.cwd ?? "Unknown"
+            let transcriptPath = findTranscript(sessionId: sessionId, projectPath: projectPath)
+            let tokens = (status.contextWindow?.totalInputTokens ?? 0) + (status.contextWindow?.totalOutputTokens ?? 0)
+
+            sessions.append(SessionInfo(
+                sessionId: sessionId,
+                projectPath: projectPath,
+                projectName: extractProjectName(projectPath),
+                startTime: modDate,
+                durationMinutes: 0,
+                userMessageCount: 0,
+                assistantMessageCount: 0,
+                firstPrompt: "(Active session)",
+                toolCounts: [:],
+                inputTokens: status.contextWindow?.totalInputTokens ?? 0,
+                outputTokens: status.contextWindow?.totalOutputTokens ?? 0,
+                linesAdded: status.cost?.totalLinesAdded ?? 0,
+                linesRemoved: status.cost?.totalLinesRemoved ?? 0,
+                transcriptPath: transcriptPath
+            ))
+        }
+
+        return sessions
     }
 
     // MARK: - Bookmarks
