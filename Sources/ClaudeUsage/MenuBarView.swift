@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var service: UsageDataService
+    var openBrowser: () -> Void = {}
 
     var body: some View {
         ScrollView {
@@ -78,16 +79,16 @@ struct MenuBarView: View {
             rateLimitRow(
                 title: "Current session",
                 subtitle: "5-hour window",
-                percentage: limits.fiveHour.usedPercentage,
+                percentage: limits.fiveHour.effectivePercentage,
                 resetText: "Resets in \(limits.fiveHour.timeUntilReset)",
-                color: limitColor(limits.fiveHour.usedPercentage)
+                color: limitColor(limits.fiveHour.effectivePercentage)
             )
             rateLimitRow(
                 title: "All models",
                 subtitle: "7-day window",
-                percentage: limits.sevenDay.usedPercentage,
+                percentage: limits.sevenDay.effectivePercentage,
                 resetText: "Resets \(limits.sevenDay.timeUntilReset)",
-                color: limitColor(limits.sevenDay.usedPercentage)
+                color: limitColor(limits.sevenDay.effectivePercentage)
             )
         }
     }
@@ -257,6 +258,11 @@ struct MenuBarView: View {
             Text("Updated \(formatTime(service.lastUpdated))")
                 .font(.caption2).foregroundStyle(.tertiary)
             Spacer()
+            Button(action: openBrowser) {
+                Label("Sessions", systemImage: "bubble.left.and.bubble.right")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
             Button("Quit") { NSApplication.shared.terminate(nil) }
                 .buttonStyle(.borderless).font(.caption)
         }

@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 final class UsageDataService: ObservableObject {
     // Live session data
@@ -17,6 +18,11 @@ final class UsageDataService: ObservableObject {
     private var refreshTimer: Timer?
 
     private let staleThreshold: TimeInterval = 24 * 3600
+
+    // Alert thresholds
+    private let alertThreshold = 80
+    private var fiveHourAlertSent = false
+    private var sevenDayAlertSent = false
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -48,6 +54,7 @@ final class UsageDataService: ObservableObject {
                 self.summary = summary
                 self.recentSessions = metaSessions
                 self.lastUpdated = Date()
+                self.checkAlerts()
             }
         }
     }
@@ -166,5 +173,47 @@ final class UsageDataService: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
+    }
+
+    // MARK: - Alerts
+
+    private func checkAlerts() {
+        guard let limits = rateLimits else { return }
+
+        // 5-hour window alert
+        if limits.fiveHour.effectivePercentage >= alertThreshold && !fiveHourAlertSent {
+            fiveHourAlertSent = true
+            sendNotification(
+                title: "Claude Usage: 5-Hour Limit",
+                body: "\(limits.fiveHour.effectivePercentage)% used. Resets in \(limits.fiveHour.timeUntilReset)."
+            )
+        } else if limits.fiveHour.effectivePercentage < alertThreshold {
+            fiveHourAlertSent = false
+        }
+
+        // 7-day window alert
+        if limits.sevenDay.effectivePercentage >= alertThreshold && !sevenDayAlertSent {
+            sevenDayAlertSent = true
+            sendNotification(
+                title: "Claude Usage: 7-Day Limit",
+                body: "\(limits.sevenDay.effectivePercentage)% used. Resets \(limits.sevenDay.timeUntilReset)."
+            )
+        } else if limits.sevenDay.effectivePercentage < alertThreshold {
+            sevenDayAlertSent = false
+        }
+    }
+
+    private func sendNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 }

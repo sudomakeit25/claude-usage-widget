@@ -87,10 +87,20 @@ struct RateWindow: Codable {
         Date(timeIntervalSince1970: TimeInterval(resetsAt))
     }
 
+    /// If the reset time has passed, the limit has already reset
+    var hasReset: Bool {
+        Date() >= resetDate
+    }
+
+    /// Effective percentage, accounting for resets that already happened
+    var effectivePercentage: Int {
+        hasReset ? 0 : usedPercentage
+    }
+
     var timeUntilReset: String {
         let now = Date()
         let reset = resetDate
-        guard reset > now else { return "now" }
+        guard reset > now else { return "Reset" }
 
         let diff = Calendar.current.dateComponents([.day, .hour, .minute], from: now, to: reset)
         if let d = diff.day, d > 0 {
