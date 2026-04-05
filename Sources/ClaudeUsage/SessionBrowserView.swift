@@ -13,30 +13,97 @@ struct SessionBrowserView: View {
     @State private var searchResults: [SessionInfo]?
     @State private var showDeleteConfirm = false
     @State private var sessionToDelete: SessionInfo?
+    @State private var showCommandPalette = false
+    @State private var showRenameSheet = false
+    @State private var renameText = ""
+    @State private var sessionToRename: SessionInfo?
+    @State private var showCharts = false
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 320)
-        } detail: {
-            detail
-        }
-        .frame(minWidth: 900, minHeight: 600)
-        .onAppear { sessionService.loadAll() }
-        .alert("Delete Session?", isPresented: $showDeleteConfirm) {
-            Button("Delete", role: .destructive) {
-                if let session = sessionToDelete {
-                    sessionService.deleteSession(session)
-                    if selectedSession?.sessionId == session.sessionId {
-                        selectedSession = nil
-                        messages = []
+        ZStack {
+            NavigationSplitView {
+                sidebar
+                    .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 340)
+            } detail: {
+                detail
+            }
+            .frame(minWidth: 900, minHeight: 600)
+            .onAppear { sessionService.loadAll() }
+            .alert("Delete Session?", isPresented: $showDeleteConfirm) {
+                Button("Delete", role: .destructive) {
+                    if let session = sessionToDelete {
+                        sessionService.deleteSession(session)
+                        if selectedSession?.sessionId == session.sessionId {
+                            selectedSession = nil
+                            messages = []
+                        }
                     }
                 }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will delete the session metadata and transcript. This cannot be undone.")
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will delete the session metadata and transcript. This cannot be undone.")
+            .sheet(isPresented: $showRenameSheet) {
+                renameSheet
+            }
+
+            // Command palette overlay
+            if showCommandPalette {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture { showCommandPalette = false }
+
+                VStack {
+                    CommandPalette(
+                        isPresented: $showCommandPalette,
+                        sessions: sessionService.allSessions,
+                        onSelect: { session in
+                            selectedSession = session
+                            loadConversation(session)
+                        }
+                    )
+                    .padding(.top, 80)
+                    Spacer()
+                }
+            }
         }
+        .onKeyPress(keys: [KeyEquivalent("k")]) { press in
+            if press.modifiers.contains(.command) {
+                showCommandPalette.toggle()
+                return .handled
+            }
+            return .ignored
+        }
+    }
+
+    // Rename sheet
+    private var renameSheet: some View {
+        VStack(spacing: 16) {
+            Text("Rename Session")
+                .font(.headline)
+            TextField("Session title", text: $renameText)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 300)
+            HStack {
+                Button("Clear") {
+                    if let session = sessionToRename {
+                        sessionService.renameSession(session.sessionId, title: nil)
+                    }
+                    showRenameSheet = false
+                }
+                Spacer()
+                Button("Cancel") { showRenameSheet = false }
+                Button("Save") {
+                    if let session = sessionToRename {
+                        sessionService.renameSession(session.sessionId, title: renameText)
+                    }
+                    showRenameSheet = false
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 400)
     }
 
     // MARK: - Sidebar
@@ -180,11 +247,28 @@ struct SessionBrowserView: View {
             Label("Resume Session", systemImage: "play")
         }
 
+        Divider()
+
+        Button(action: { sessionService.togglePin(session.sessionId) }) {
+            Label(
+                session.isPinned ? "Unpin" : "Pin to Top",
+                systemImage: session.isPinned ? "pin.slash" : "pin"
+            )
+        }
+
         Button(action: { sessionService.toggleBookmark(session.sessionId) }) {
             Label(
                 session.isBookmarked ? "Remove Bookmark" : "Bookmark",
                 systemImage: session.isBookmarked ? "bookmark.slash" : "bookmark"
             )
+        }
+
+        Button(action: {
+            sessionToRename = session
+            renameText = session.customTitle ?? session.firstPrompt
+            showRenameSheet = true
+        }) {
+            Label("Rename", systemImage: "pencil")
         }
 
         Divider()
@@ -213,7 +297,26 @@ struct SessionBrowserView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let session = selectedSession {
+        if showCharts {
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    Button(action: { showCharts = false }) {
+                        Label("Back to Sessions", systemImage: "chevron.left")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    Spacer()
+                }
+                .padding(8)
+                .background(Color(nsColor: .windowBackgroundColor))
+                Divider()
+
+                ScrollView {
+                    UsageChartsView(sessions: sessionService.allSessions)
+                }
+            }
+        } else if let session = selectedSession {
             VStack(spacing: 0) {
                 // Top bar
                 HStack {
@@ -288,6 +391,12 @@ struct SessionBrowserView: View {
             Text("\(sessionService.allSessions.count) sessions across \(sessionService.projects.count) projects")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+            Button(action: { showCharts = true }) {
+                Label("View Usage Charts", systemImage: "chart.bar")
+            }
+            .buttonStyle(.bordered)
+            .padding(.top, 8)
 
             Spacer()
 
@@ -387,7 +496,11 @@ struct SessionBrowserView: View {
 
     private var displayedSessions: [SessionInfo] {
         let base = searchResults ?? sessionService.allSessions
-        return sessionService.filtered(sessions: base, by: activeFilter, project: selectedProject)
+        let filtered = sessionService.filtered(sessions: base, by: activeFilter, project: selectedProject)
+        // Pinned sessions first
+        let pinned = filtered.filter { $0.isPinned }
+        let unpinned = filtered.filter { !$0.isPinned }
+        return pinned + unpinned
     }
 
     // MARK: - Search
@@ -413,12 +526,29 @@ struct SessionBrowserView: View {
     private func resumeSession(_ session: SessionInfo) {
         let dir = session.projectPath
         let sessionId = session.sessionId
-        let script = """
-            tell application "Terminal"
-                activate
-                do script "cd \\"\(dir)\\" && claude --resume \\"\(sessionId)\\""
-            end tell
-            """
+        // Detect iTerm2
+        let hasITerm = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.googlecode.iterm2") != nil
+
+        let script: String
+        if hasITerm {
+            script = """
+                tell application "iTerm"
+                    activate
+                    set newWindow to (create window with default profile)
+                    tell current session of newWindow
+                        write text "cd \\"\(dir)\\" && claude --resume \\"\(sessionId)\\""
+                    end tell
+                end tell
+                """
+        } else {
+            script = """
+                tell application "Terminal"
+                    activate
+                    do script "cd \\"\(dir)\\" && claude --resume \\"\(sessionId)\\""
+                end tell
+                """
+        }
+
         if let appleScript = NSAppleScript(source: script) {
             var error: NSDictionary?
             appleScript.executeAndReturnError(&error)
@@ -517,13 +647,18 @@ struct SidebarSessionRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                if session.isBookmarked {
-                    Image(systemName: "bookmark.fill")
-                        .font(.system(size: 8))
+            HStack(spacing: 5) {
+                if session.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 7))
                         .foregroundStyle(.orange)
                 }
-                Text(session.firstPrompt.isEmpty ? "Session" : String(session.firstPrompt.prefix(40)))
+                if session.isBookmarked {
+                    Image(systemName: "bookmark.fill")
+                        .font(.system(size: 7))
+                        .foregroundStyle(.blue)
+                }
+                Text(String(session.displayTitle.prefix(40)))
                     .font(.subheadline)
                     .lineLimit(1)
                 Spacer()
@@ -535,20 +670,26 @@ struct SidebarSessionRow: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Resume in Terminal")
-                } else if session.transcriptPath != nil {
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: 6, height: 6)
+                } else {
+                    Text(String(format: "$%.0f", session.estimatedCost))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.tertiary)
                 }
             }
 
-            if isHovered {
+            HStack(spacing: 6) {
                 Text(shortPath(session.projectPath))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.head)
+                Spacer()
+                Text(relativeDate(session.startTime))
+                    .font(.caption2)
+                    .foregroundStyle(.quaternary)
             }
+            .opacity(isHovered ? 1 : 0)
+            .frame(height: 14)
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
@@ -556,12 +697,20 @@ struct SidebarSessionRow: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color.gray.opacity(0.15) : isHovered ? Color.gray.opacity(0.08) : Color.clear)
         )
-        .onHover { hovering in isHovered = hovering }
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) { isHovered = hovering }
+        }
         .help(session.projectPath)
     }
 
     private func shortPath(_ path: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+    }
+
+    private func relativeDate(_ date: Date) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f.localizedString(for: date, relativeTo: Date())
     }
 }

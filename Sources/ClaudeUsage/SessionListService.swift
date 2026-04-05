@@ -17,8 +17,18 @@ struct SessionInfo: Identifiable, Hashable {
     let linesRemoved: Int
     let transcriptPath: String?
     var isBookmarked: Bool = false
+    var isPinned: Bool = false
+    var customTitle: String?
 
     var totalMessages: Int { userMessageCount + assistantMessageCount }
+    var displayTitle: String { customTitle ?? (firstPrompt.isEmpty ? "Session" : firstPrompt) }
+
+    // Rough API cost estimate (Opus 4.6 rates)
+    var estimatedCost: Double {
+        let inputCost = Double(inputTokens) * 15.0 / 1_000_000
+        let outputCost = Double(outputTokens) * 75.0 / 1_000_000
+        return inputCost + outputCost
+    }
 
     static func == (lhs: SessionInfo, rhs: SessionInfo) -> Bool {
         lhs.sessionId == rhs.sessionId
@@ -54,7 +64,11 @@ final class SessionListService: ObservableObject {
     private let sessionMetaDir: String
     private let projectsDir: String
     private let bookmarksPath: String
+    private let pinsPath: String
+    private let titlesPath: String
     private var bookmarks: Set<String> = []
+    private var pins: Set<String> = []
+    private var titles: [String: String] = [:]
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -62,7 +76,11 @@ final class SessionListService: ObservableObject {
         sessionMetaDir = "\(claudeDir)/usage-data/session-meta"
         projectsDir = "\(claudeDir)/projects"
         bookmarksPath = "\(claudeDir)/bookmarks.json"
+        pinsPath = "\(claudeDir)/pins.json"
+        titlesPath = "\(claudeDir)/session-titles.json"
         loadBookmarks()
+        loadPins()
+        loadTitles()
     }
 
     func loadAll() {
@@ -71,9 +89,12 @@ final class SessionListService: ObservableObject {
             guard let self else { return }
             var sessions = self.loadAllSessions()
 
-            // Apply bookmarks
+            // Apply bookmarks, pins, titles
             for i in sessions.indices {
-                sessions[i].isBookmarked = self.bookmarks.contains(sessions[i].sessionId)
+                let sid = sessions[i].sessionId
+                sessions[i].isBookmarked = self.bookmarks.contains(sid)
+                sessions[i].isPinned = self.pins.contains(sid)
+                sessions[i].customTitle = self.titles[sid]
             }
 
             let grouped = self.groupByProject(sessions)
@@ -112,6 +133,56 @@ final class SessionListService: ObservableObject {
     private func saveBookmarks() {
         guard let data = try? JSONEncoder().encode(Array(bookmarks)) else { return }
         FileManager.default.createFile(atPath: bookmarksPath, contents: data)
+    }
+
+    // MARK: - Pins
+
+    func togglePin(_ sessionId: String) {
+        if pins.contains(sessionId) {
+            pins.remove(sessionId)
+        } else {
+            pins.insert(sessionId)
+        }
+        savePins()
+        if let idx = allSessions.firstIndex(where: { $0.sessionId == sessionId }) {
+            allSessions[idx].isPinned = pins.contains(sessionId)
+        }
+    }
+
+    private func loadPins() {
+        guard let data = FileManager.default.contents(atPath: pinsPath),
+              let list = try? JSONDecoder().decode([String].self, from: data) else { return }
+        pins = Set(list)
+    }
+
+    private func savePins() {
+        guard let data = try? JSONEncoder().encode(Array(pins)) else { return }
+        FileManager.default.createFile(atPath: pinsPath, contents: data)
+    }
+
+    // MARK: - Rename
+
+    func renameSession(_ sessionId: String, title: String?) {
+        if let title, !title.isEmpty {
+            titles[sessionId] = title
+        } else {
+            titles.removeValue(forKey: sessionId)
+        }
+        saveTitles()
+        if let idx = allSessions.firstIndex(where: { $0.sessionId == sessionId }) {
+            allSessions[idx].customTitle = titles[sessionId]
+        }
+    }
+
+    private func loadTitles() {
+        guard let data = FileManager.default.contents(atPath: titlesPath),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return }
+        titles = dict
+    }
+
+    private func saveTitles() {
+        guard let data = try? JSONEncoder().encode(titles) else { return }
+        FileManager.default.createFile(atPath: titlesPath, contents: data)
     }
 
     // MARK: - Delete

@@ -1,7 +1,10 @@
 import SwiftUI
+import AppKit
 
 struct MessageView: View {
     let message: ConversationMessage
+    @State private var isHovered = false
+    @State private var copiedId: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -9,44 +12,60 @@ struct MessageView: View {
             VStack(alignment: .leading, spacing: 6) {
                 headerRow
 
-                // Text content
                 if !message.isToolResult && !message.textContent.isEmpty {
-                    Text(message.textContent)
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .lineSpacing(3)
+                    MarkdownText(message.textContent)
                 }
 
-                // Thinking
                 if let thinking = message.thinkingContent, !thinking.isEmpty {
                     thinkingView(thinking)
                 }
 
-                // Tool uses
                 ForEach(message.toolUses) { tool in
                     toolUseView(tool)
                 }
 
-                // Tool result
                 if let result = message.toolResult {
                     toolResultView(result)
                 }
 
-                // Token badge for assistant
                 if let usage = message.tokenUsage, message.role == .assistant {
-                    HStack(spacing: 8) {
-                        Text("\(usage.outputTokens) tokens")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.top, 2)
+                    Text("\(usage.outputTokens) tokens")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 2)
                 }
             }
             Spacer(minLength: 0)
+
+            // Copy button on hover
+            if isHovered {
+                Button(action: { copyMessage() }) {
+                    Image(systemName: copiedId == message.id ? "checkmark" : "doc.on.doc")
+                        .font(.caption)
+                        .foregroundStyle(copiedId == message.id ? .green : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Copy message")
+                .padding(.top, 4)
+            }
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 16)
+        .onHover { isHovered = $0 }
+    }
+
+    private func copyMessage() {
+        var text = message.textContent
+        for tool in message.toolUses {
+            text += "\n\n[\(tool.name)]\n\(tool.input)"
+        }
+        if let result = message.toolResult {
+            text += "\n\n[Result]\n\(result.content)"
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copiedId = message.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copiedId = nil }
     }
 
     // MARK: - Avatar
@@ -75,8 +94,6 @@ struct MessageView: View {
         }
         .padding(.top, 2)
     }
-
-    // MARK: - Header
 
     private var headerRow: some View {
         HStack(spacing: 6) {
@@ -109,10 +126,8 @@ struct MessageView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "brain.head.profile")
-                    .font(.caption)
-                Text("Thinking")
-                    .font(.caption)
+                Image(systemName: "brain.head.profile").font(.caption)
+                Text("Thinking").font(.caption)
             }
             .foregroundStyle(.secondary)
         }
@@ -136,12 +151,8 @@ struct MessageView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: toolIcon(tool.name))
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                Text(tool.name)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.primary)
+                Image(systemName: toolIcon(tool.name)).font(.caption).foregroundStyle(.orange)
+                Text(tool.name).font(.caption.weight(.medium)).foregroundStyle(.primary)
             }
         }
         .padding(8)
@@ -174,12 +185,8 @@ struct MessageView: View {
             }
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(
-            result.isError ? Color.red.opacity(0.04) : Color.green.opacity(0.04)
-        ))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(
-            result.isError ? Color.red.opacity(0.1) : Color.green.opacity(0.1)
-        ))
+        .background(RoundedRectangle(cornerRadius: 8).fill(result.isError ? Color.red.opacity(0.04) : Color.green.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(result.isError ? Color.red.opacity(0.1) : Color.green.opacity(0.1)))
     }
 
     // MARK: - Helpers
@@ -214,5 +221,119 @@ struct MessageView: View {
         let f = DateFormatter()
         f.dateFormat = "h:mm a"
         return f.string(from: date)
+    }
+}
+
+// MARK: - Markdown Text View
+
+struct MarkdownText: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(parseBlocks().enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .code(let lang, let code):
+                    codeBlock(language: lang, code: code)
+                case .text(let content):
+                    if let attributed = try? AttributedString(markdown: content, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                        Text(attributed)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text(content)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func codeBlock(language: String, code: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text(language.isEmpty ? "code" : language)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(action: {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code, forType: .string)
+                }) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.gray.opacity(0.12))
+
+            // Code
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+        }
+        .background(Color.gray.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.1)))
+    }
+
+    // MARK: - Block Parsing
+
+    private enum Block {
+        case text(String)
+        case code(language: String, code: String)
+    }
+
+    private func parseBlocks() -> [Block] {
+        var blocks: [Block] = []
+        var currentText = ""
+        let lines = text.components(separatedBy: "\n")
+        var inCodeBlock = false
+        var codeLanguage = ""
+        var codeLines: [String] = []
+
+        for line in lines {
+            if line.hasPrefix("```") && !inCodeBlock {
+                if !currentText.isEmpty {
+                    blocks.append(.text(currentText.trimmingCharacters(in: .whitespacesAndNewlines)))
+                    currentText = ""
+                }
+                inCodeBlock = true
+                codeLanguage = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                codeLines = []
+            } else if line.hasPrefix("```") && inCodeBlock {
+                blocks.append(.code(language: codeLanguage, code: codeLines.joined(separator: "\n")))
+                inCodeBlock = false
+                codeLanguage = ""
+                codeLines = []
+            } else if inCodeBlock {
+                codeLines.append(line)
+            } else {
+                currentText += line + "\n"
+            }
+        }
+
+        if inCodeBlock {
+            blocks.append(.code(language: codeLanguage, code: codeLines.joined(separator: "\n")))
+        }
+        if !currentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            blocks.append(.text(currentText.trimmingCharacters(in: .whitespacesAndNewlines)))
+        }
+
+        return blocks
     }
 }
