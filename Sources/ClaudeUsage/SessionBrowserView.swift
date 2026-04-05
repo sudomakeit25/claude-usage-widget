@@ -325,6 +325,20 @@ struct SessionBrowserView: View {
             VStack(spacing: 0) {
                 // Top bar
                 HStack {
+                    Button(action: {
+                        selectedSession = nil
+                        messages = []
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.caption2)
+                            Text("Home")
+                                .font(.caption)
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+
                     if session.isBookmarked {
                         Image(systemName: "bookmark.fill")
                             .font(.caption)
