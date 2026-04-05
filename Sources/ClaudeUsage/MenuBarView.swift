@@ -175,7 +175,8 @@ struct MenuBarView: View {
     private var todaySection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Today").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
+                StatBadge(icon: "person", value: "\(service.summary.todayUserMessages)", label: "Prompts")
                 StatBadge(icon: "message", value: "\(service.summary.todayMessages)", label: "Messages")
                 StatBadge(icon: "terminal", value: "\(service.summary.todaySessions)", label: "Sessions")
                 StatBadge(icon: "hammer", value: "\(service.summary.todayToolCalls)", label: "Tools")
@@ -189,7 +190,8 @@ struct MenuBarView: View {
     private var weekSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("This Week").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
+                StatBadge(icon: "person", value: "\(service.summary.weekUserMessages)", label: "Prompts")
                 StatBadge(icon: "message", value: "\(service.summary.weekMessages)", label: "Messages")
                 StatBadge(icon: "terminal", value: "\(service.summary.weekSessions)", label: "Sessions")
                 StatBadge(icon: "number", value: formatTokens(service.summary.weekTokens), label: "Tokens")

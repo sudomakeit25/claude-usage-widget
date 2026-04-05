@@ -162,11 +162,13 @@ final class UsageDataService: ObservableObject {
 
         // Count messages and tools from active session transcripts
         var liveMessages = 0
+        var liveUserMessages = 0
         var liveToolCalls = 0
         for session in sessions {
             if let sessionId = session.sessionId {
                 let counts = countMessagesInTranscript(sessionId: sessionId)
                 liveMessages += counts.messages
+                liveUserMessages += counts.userMessages
                 liveToolCalls += counts.toolCalls
             }
         }
@@ -187,10 +189,12 @@ final class UsageDataService: ObservableObject {
 
         return UsageSummary(
             todayMessages: bestTodayMessages,
+            todayUserMessages: liveUserMessages,
             todaySessions: bestTodaySessions,
             todayToolCalls: bestTodayToolCalls,
             todayTokens: bestTodayTokens,
             weekMessages: max(statsWeekMessages, bestTodayMessages),
+            weekUserMessages: liveUserMessages,
             weekSessions: max(statsWeekSessions, bestTodaySessions),
             weekTokens: max(statsWeekTokens, bestTodayTokens),
             recentDays: stats?.dailyActivity.filter { $0.date >= twoWeeksAgo } ?? [],
@@ -198,33 +202,36 @@ final class UsageDataService: ObservableObject {
         )
     }
 
-    private func countMessagesInTranscript(sessionId: String) -> (messages: Int, toolCalls: Int) {
+    private func countMessagesInTranscript(sessionId: String) -> (messages: Int, userMessages: Int, toolCalls: Int) {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser.path
         let projectsDir = "\(home)/.claude/projects"
 
-        // Find the transcript file
-        guard let dirs = try? fm.contentsOfDirectory(atPath: projectsDir) else { return (0, 0) }
+        guard let dirs = try? fm.contentsOfDirectory(atPath: projectsDir) else { return (0, 0, 0) }
         for dir in dirs {
             let path = "\(projectsDir)/\(dir)/\(sessionId).jsonl"
             guard let data = fm.contents(atPath: path),
                   let content = String(data: data, encoding: .utf8) else { continue }
 
             var messages = 0
+            var userMessages = 0
             var toolCalls = 0
             for line in content.components(separatedBy: .newlines) where !line.isEmpty {
                 if line.contains("\"type\":\"user\"") && !line.contains("\"tool_result\"") {
+                    // User message (not a tool result)
+                    if line.contains("\"userType\":\"external\"") && !line.contains("\"isSidechain\":true") {
+                        userMessages += 1
+                    }
                     messages += 1
                 } else if line.contains("\"type\":\"assistant\"") {
                     messages += 1
-                    // Count tool_use blocks
                     let toolCount = line.components(separatedBy: "\"type\":\"tool_use\"").count - 1
                     toolCalls += toolCount
                 }
             }
-            return (messages, toolCalls)
+            return (messages, userMessages, toolCalls)
         }
-        return (0, 0)
+        return (0, 0, 0)
     }
 
     private func dateString(for date: Date) -> String {

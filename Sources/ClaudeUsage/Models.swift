@@ -208,10 +208,12 @@ struct SessionMeta: Codable, Identifiable {
 
 struct UsageSummary {
     let todayMessages: Int
+    let todayUserMessages: Int
     let todaySessions: Int
     let todayToolCalls: Int
     let todayTokens: Int
     let weekMessages: Int
+    let weekUserMessages: Int
     let weekSessions: Int
     let weekTokens: Int
     let recentDays: [DailyActivity]
@@ -220,8 +222,8 @@ struct UsageSummary {
 
 extension UsageSummary {
     static let empty = UsageSummary(
-        todayMessages: 0, todaySessions: 0, todayToolCalls: 0, todayTokens: 0,
-        weekMessages: 0, weekSessions: 0, weekTokens: 0,
+        todayMessages: 0, todayUserMessages: 0, todaySessions: 0, todayToolCalls: 0, todayTokens: 0,
+        weekMessages: 0, weekUserMessages: 0, weekSessions: 0, weekTokens: 0,
         recentDays: [], modelBreakdown: [:]
     )
 }
