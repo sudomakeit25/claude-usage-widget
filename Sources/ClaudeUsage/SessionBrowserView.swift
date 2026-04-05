@@ -720,6 +720,11 @@ struct SidebarSessionRow: View {
                     .buttonStyle(.borderless)
                     .help("Resume in Terminal")
                 } else {
+                    if session.transcriptPath != nil {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 5, height: 5)
+                    }
                     Text(String(format: "$%.0f", session.estimatedCost))
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(.tertiary)
