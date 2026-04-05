@@ -206,6 +206,7 @@ struct SessionBrowserView: View {
                 .listStyle(.sidebar)
                 .onChange(of: selectedSession) { _, newSession in
                     if let session = newSession {
+                        showCharts = false
                         loadConversation(session)
                     }
                 }
