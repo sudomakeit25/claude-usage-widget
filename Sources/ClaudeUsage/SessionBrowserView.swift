@@ -567,15 +567,31 @@ struct SessionBrowserView: View {
 
     // MARK: - Resume
 
+    private func findClaudeBinary() -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidates = [
+            "\(home)/.local/bin/claude",
+            "/usr/local/bin/claude",
+            "/opt/homebrew/bin/claude",
+            "\(home)/.npm-global/bin/claude",
+        ]
+        for path in candidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        // Fallback: rely on PATH via login shell
+        return "claude"
+    }
+
     private func resumeSession(_ session: SessionInfo) {
         let dir = session.projectPath
         let sessionId = session.sessionId
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let claudeBin = "\(home)/.local/bin/claude"
+        let claudeBin = findClaudeBinary()
 
-        // Write a temp shell script
+        // Write a temp shell script using login shell to pick up PATH
         let tmpScript = "/tmp/claude-resume.sh"
-        let shellContent = "#!/bin/bash\ncd \"\(dir)\" && \"\(claudeBin)\" --resume \"\(sessionId)\"\n"
+        let shellContent = "#!/bin/bash -l\ncd \"\(dir)\" && \"\(claudeBin)\" --resume \"\(sessionId)\"\n"
         try? shellContent.write(toFile: tmpScript, atomically: true, encoding: .utf8)
 
         // Make executable and run

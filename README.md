@@ -1,40 +1,80 @@
 # Claude Usage Widget
 
-A macOS menu bar app that displays your Claude Code usage limits and session stats at a glance.
+A macOS menu bar app for monitoring Claude Code usage limits, browsing sessions, and analyzing usage patterns.
 
-![Claude Usage Widget](screenshot.png)
+Built for Claude Code Max/Pro users who want visibility into their rate limits, session history, and token consumption without leaving the desktop.
 
 ## Features
 
-- **Rate limits**: 5-hour and 7-day usage percentages with progress bars and reset countdowns
-- **Active sessions**: All running Claude Code sessions with model, project path, API equivalent cost, and lines changed
-- **Today / This Week**: Message, session, and token counts
-- **Recent Activity**: 14-day activity bar chart
-- **Model breakdown**: All-time token usage per model (Opus, Sonnet, Haiku)
-- **Recent sessions**: Last 5 sessions with first prompt preview
-- **Auto-refresh**: Updates every 5 seconds from live session data
+### Menu Bar Widget
+- **Rate limits** with progress bars and reset countdowns (5-hour and 7-day windows)
+- **Active sessions** showing model, project, API-equivalent cost, context window usage, and lines changed
+- **Today / This Week** stats: prompts, messages, sessions, tool calls, tokens
+- **Model breakdown**: all-time token usage per model
+- **Recent sessions** with first prompt preview
+- **80% usage alerts** via macOS notifications
+
+### Session Browser (click "Sessions" or press Cmd+Shift+C)
+- **Browse all sessions** grouped by project with search
+- **Read full conversations** with markdown rendering, code blocks with copy buttons
+- **Filter** by date (Today, This Week, This Month), project, or bookmarks
+- **Pin** sessions to top of sidebar
+- **Rename** sessions with custom titles
+- **Bookmark** important sessions
+- **Resume** sessions in Terminal or iTerm2 (auto-detected)
+- **Export** conversations as Markdown
+- **Delete** sessions you no longer need
+- **Cmd+K command palette** for quick navigation
+- **Project memory viewer** showing auto-memory files with frontmatter parsing
+- **Context window** usage bar with token breakdown
+
+### Usage Charts (click "View Usage Charts")
+- Daily sessions and daily cost (API equivalent)
+- Hourly activity heatmap
+- Session duration distribution
+- Cost per project
+- Sessions per project
+- Top tools used
+- Lines changed per project
+- Tokens per message (efficiency)
+- Session length vs messages (scatter plot)
+- Cumulative cost over time
+- Average session duration trend
+- Hover on daily cost to see which sessions caused spikes
 
 ## Requirements
 
 - macOS 14+ (Sonoma or later)
-- Swift 6.0+
+- Swift 6.0+ (included with Xcode 16+)
 - [Claude Code](https://claude.ai/code) CLI installed and authenticated
 
-## How it works
+## Quick Start
 
-The app reads data from two sources:
+```bash
+git clone https://github.com/sudomakeit25/claude-usage-widget.git
+cd claude-usage-widget
+bash Scripts/setup.sh
+```
 
-1. **Live rate limits**: A `statusLine` hook in Claude Code settings writes session data (including rate limits) to `~/.claude/session-status/` as JSON files. The app reads these every 5 seconds.
-2. **Historical stats**: `~/.claude/stats-cache.json` and `~/.claude/usage-data/session-meta/` provide historical usage data (daily activity, model breakdown, past sessions).
+The setup script will:
+1. Detect your Claude Code installation
+2. Create the statusline hook for live data
+3. Guide you through configuring `settings.json`
+4. Build and install the app to `~/Applications/`
+5. Provide instructions for auto-start on login
 
-## Installation
+Then launch:
+```bash
+open ~/Applications/ClaudeUsage.app
+```
+
+## Manual Installation
 
 ### 1. Configure the statusline hook
 
-Add the statusline script that persists rate limit data:
+Create the script that persists session data:
 
 ```bash
-# Create the script
 cat > ~/.claude/statusline.sh << 'EOF'
 #!/bin/bash
 input=$(cat)
@@ -46,7 +86,7 @@ EOF
 chmod +x ~/.claude/statusline.sh
 ```
 
-Then add the `statusLine` setting to `~/.claude/settings.json`:
+Add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -57,39 +97,54 @@ Then add the `statusLine` setting to `~/.claude/settings.json`:
 }
 ```
 
-If you already have other settings in the file, just add the `statusLine` key alongside them.
-
-### 2. Build the app
+### 2. Build
 
 ```bash
-git clone https://github.com/sudomakeit25/claude-usage-widget.git
-cd claude-usage-widget
 bash Scripts/build.sh
 ```
-
-This compiles a release build and creates `build/ClaudeUsage.app`.
 
 ### 3. Install
 
 ```bash
-# Install to user Applications folder
 cp -r build/ClaudeUsage.app ~/Applications/
-
-# Or install system-wide (requires sudo)
-sudo cp -r build/ClauseUsage.app /Applications/
-```
-
-### 4. Launch
-
-```bash
 open ~/Applications/ClaudeUsage.app
 ```
 
-A brain icon will appear in your menu bar. Click it to see your usage dashboard.
+### 4. Start on login (optional)
 
-### 5. (Optional) Start on login
+System Settings > General > Login Items > + > select ClaudeUsage
 
-Go to **System Settings > General > Login Items**, click **+**, and select **ClaudeUsage** from your Applications folder.
+## How It Works
+
+The app reads data from several sources in `~/.claude/`:
+
+| Source | Data | Updated |
+|--------|------|---------|
+| `session-status/*.json` | Live rate limits, cost, context window | Every statusline refresh (~seconds) |
+| `rate-limits.json` | Latest session's full statusline data | Every statusline refresh |
+| `stats-cache.json` | Historical daily activity, model usage | Periodically by Claude Code |
+| `usage-data/session-meta/` | Per-session metadata (tokens, tools, duration) | When sessions end |
+| `projects/*/memory/` | Auto-memory files | When Claude writes memory |
+
+The statusline hook writes per-session JSON files so the widget can track multiple concurrent sessions.
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| Cmd+Shift+C | Open session browser (global hotkey) |
+| Cmd+K | Command palette (quick jump to session) |
+
+## What the Numbers Mean
+
+| Metric | Description |
+|--------|-------------|
+| **Current session (5-hour)** | Usage % of your rolling 5-hour rate limit window |
+| **All models (7-day)** | Usage % of your rolling 7-day rate limit window |
+| **API equiv.** | What the session's token usage would cost at standard API pricing. On Max/Pro plans this is informational, not an actual charge |
+| **Prompts** | Number of messages you typed (excludes tool results and subagent messages) |
+| **Messages** | Total messages in the conversation (user + assistant + tool results) |
+| **ctx %** | How much of the model's context window is used |
 
 ## Updating
 
@@ -102,37 +157,49 @@ cp -r build/ClaudeUsage.app ~/Applications/
 open ~/Applications/ClaudeUsage.app
 ```
 
-## What the metrics mean
-
-| Metric | Description |
-|--------|-------------|
-| **Current session (5-hour)** | Usage percentage of your 5-hour rolling rate limit window |
-| **All models (7-day)** | Usage percentage of your 7-day rolling rate limit window |
-| **API equiv.** | What the session's token usage would cost at standard API pricing. On Max/Pro plans, this is informational only, not an actual charge. |
-| **ctx %** | How much of the model's context window is currently used |
-| **+lines / -lines** | Lines of code added/removed in the session |
-
-## Project structure
+## Project Structure
 
 ```
 claude-usage-widget/
-  Package.swift                          # Swift Package Manager config
+  Package.swift                             # Swift Package Manager config
   Sources/ClaudeUsage/
-    App.swift                            # Menu bar app entry point
-    Models.swift                         # Data models for all JSON sources
-    UsageDataService.swift               # File reading, parsing, auto-refresh
-    MenuBarView.swift                    # SwiftUI views and components
+    App.swift                               # Menu bar + window entry point, global hotkey
+    Models.swift                            # Data models for all JSON sources
+    UsageDataService.swift                  # File reading, parsing, auto-refresh, alerts
+    MenuBarView.swift                       # Menu bar popover UI
+    SessionBrowserView.swift                # Session browser window with sidebar
+    SessionListService.swift                # Session loading, search, bookmarks, pins
+    ConversationLoader.swift                # JSONL transcript parser
+    MessageView.swift                       # Chat message rendering with markdown
+    CommandPalette.swift                    # Cmd+K quick navigation
+    UsageCharts.swift                       # 12 usage charts with Swift Charts
+    MemoryView.swift                        # Project memory viewer + context window bar
   Scripts/
-    build.sh                             # Build script (compile + create .app bundle)
+    setup.sh                                # One-command setup
+    build.sh                                # Build + create .app bundle
+  Resources/
+    AppIcon.icns                            # App icon
 ```
 
 ## Troubleshooting
 
-**All metrics show 0**: The `stats-cache.json` may be stale. Start a Claude Code session; the live session data will populate the Today section.
+**Menu bar shows 0% but I've been using Claude Code:**
+The statusline hook may not be configured. Run `bash Scripts/setup.sh` or manually add the `statusLine` setting to `~/.claude/settings.json`.
 
-**No rate limits shown**: Make sure the `statusLine` hook is configured in `~/.claude/settings.json` and you have an active Claude Code session running.
+**Rate limits show stale data:**
+The widget checks `resets_at` timestamps and shows 0% if the limit has already reset. Start a new Claude Code session to get fresh data.
 
-**App doesn't appear in menu bar**: Check that you're on macOS 14+. Try running the binary directly: `./build/ClaudeUsage.app/Contents/MacOS/ClaudeUsage`
+**No sessions appear in the browser:**
+Session metadata is stored in `~/.claude/usage-data/session-meta/`. If this directory is empty, Claude Code may not have written metadata yet. Active sessions appear once the statusline hook fires.
+
+**Resume doesn't start Claude:**
+The app tries to find the `claude` binary at `~/.local/bin/claude`, `/usr/local/bin/claude`, and `/opt/homebrew/bin/claude`. If yours is elsewhere, the app falls back to `claude` via PATH in a login shell.
+
+**macOS blocks the app ("unidentified developer"):**
+Right-click the app > Open > Open. You only need to do this once.
+
+**App doesn't appear in Cmd+Tab:**
+Rebuild the app. Older versions had `LSUIElement` set which hides from the app switcher.
 
 ## License
 

@@ -14,6 +14,9 @@ struct MenuBarView: View {
                 if let limits = service.rateLimits {
                     rateLimitsSection(limits)
                     Divider().padding(.vertical, 6)
+                } else if service.sessions.isEmpty {
+                    setupHint
+                    Divider().padding(.vertical, 6)
                 }
 
                 // Active sessions
@@ -271,6 +274,29 @@ struct MenuBarView: View {
     }
 
     // MARK: - Helpers
+
+    // MARK: - Setup Hint
+
+    private var setupHint: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.blue)
+                Text("Setup Required")
+                    .font(.subheadline.weight(.medium))
+            }
+            Text("No live data yet. Start a Claude Code session to see rate limits and usage.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("If this is your first time, run:")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("bash Scripts/setup.sh")
+                .font(.system(.caption, design: .monospaced))
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color.gray.opacity(0.1)))
+        }
+    }
 
     private func limitColor(_ p: Int) -> Color {
         p >= 80 ? .red : p >= 50 ? .orange : .green
