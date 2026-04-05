@@ -59,41 +59,56 @@ final class UsageDataService: ObservableObject {
         }
     }
 
+    // Rate limits from the most recently updated session (they're account-level)
     var rateLimits: RateLimits? {
-        sessions.first?.rateLimits
+        newestSession?.rateLimits
     }
+
+    // Track which session file was modified most recently
+    @Published var newestSession: StatusLineData?
 
     // MARK: - Live sessions
 
     private func loadAllLiveSessions() -> [StatusLineData] {
         let fm = FileManager.default
-        var results: [StatusLineData] = []
+        var results: [(session: StatusLineData, modDate: Date)] = []
 
         if let files = try? fm.contentsOfDirectory(atPath: sessionStatusDir) {
             let now = Date()
             for file in files where file.hasSuffix(".json") {
                 let path = "\(sessionStatusDir)/\(file)"
+                let modDate: Date
                 if let attrs = try? fm.attributesOfItem(atPath: path),
-                   let modDate = attrs[.modificationDate] as? Date,
-                   now.timeIntervalSince(modDate) > staleThreshold {
-                    try? fm.removeItem(atPath: path)
-                    continue
+                   let md = attrs[.modificationDate] as? Date {
+                    if now.timeIntervalSince(md) > staleThreshold {
+                        try? fm.removeItem(atPath: path)
+                        continue
+                    }
+                    modDate = md
+                } else {
+                    modDate = .distantPast
                 }
                 guard let data = fm.contents(atPath: path),
                       let session = try? JSONDecoder().decode(StatusLineData.self, from: data) else { continue }
-                results.append(session)
+                results.append((session, modDate))
             }
         }
 
         if results.isEmpty {
             if let data = FileManager.default.contents(atPath: rateLimitsPath),
                let session = try? JSONDecoder().decode(StatusLineData.self, from: data) {
-                results.append(session)
+                results.append((session, Date()))
             }
         }
 
-        results.sort { ($0.cost?.totalCostUsd ?? 0) > ($1.cost?.totalCostUsd ?? 0) }
-        return results
+        // Sort by cost for display order
+        results.sort { ($0.session.cost?.totalCostUsd ?? 0) > ($1.session.cost?.totalCostUsd ?? 0) }
+
+        // Track the most recently modified session for rate limits
+        let newest = results.max(by: { $0.modDate < $1.modDate })?.session
+        DispatchQueue.main.async { self.newestSession = newest }
+
+        return results.map { $0.session }
     }
 
     // MARK: - Stats cache
