@@ -18,6 +18,7 @@ struct SessionBrowserView: View {
     @State private var renameText = ""
     @State private var sessionToRename: SessionInfo?
     @State private var showCharts = false
+    @State private var showMemory = false
 
     var body: some View {
         ZStack {
@@ -329,6 +330,14 @@ struct SessionBrowserView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Spacer()
+                    Button(action: { showMemory.toggle() }) {
+                        Label("Memory", systemImage: "brain.filled.head.profile")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("View project memory")
+                    .foregroundStyle(showMemory ? .purple : .secondary)
+
                     Button(action: { exportSession(session) }) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.caption)
@@ -370,7 +379,23 @@ struct SessionBrowserView: View {
                     }
                     Spacer()
                 } else {
-                    conversationView
+                    if showMemory {
+                        HSplitView {
+                            conversationView
+                            VStack(spacing: 8) {
+                                // Context window from live session data
+                                if let liveSession = liveSessionData(for: session),
+                                   let ctx = liveSession.contextWindow {
+                                    ContextWindowBar(contextWindow: ctx, model: liveSession.model)
+                                }
+                                MemoryPanel(projectPath: session.projectPath)
+                            }
+                            .frame(minWidth: 300, idealWidth: 350)
+                            .padding(8)
+                        }
+                    } else {
+                        conversationView
+                    }
                 }
 
                 Divider()
@@ -584,6 +609,18 @@ struct SessionBrowserView: View {
                 isLoadingConversation = false
             }
         }
+    }
+
+    // MARK: - Live Session Data
+
+    private func liveSessionData(for session: SessionInfo) -> StatusLineData? {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        let statusDir = "\(home)/.claude/session-status"
+        let path = "\(statusDir)/\(session.sessionId).json"
+        guard let data = fm.contents(atPath: path),
+              let live = try? JSONDecoder().decode(StatusLineData.self, from: data) else { return nil }
+        return live
     }
 
     // MARK: - Helpers
