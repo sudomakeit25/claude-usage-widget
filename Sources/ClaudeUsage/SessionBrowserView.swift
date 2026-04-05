@@ -573,32 +573,23 @@ struct SessionBrowserView: View {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let claudeBin = "\(home)/.local/bin/claude"
 
-        // Write a temp shell script to avoid AppleScript escaping issues
+        // Write a temp shell script
         let tmpScript = "/tmp/claude-resume.sh"
         let shellContent = "#!/bin/bash\ncd \"\(dir)\" && \"\(claudeBin)\" --resume \"\(sessionId)\"\n"
         try? shellContent.write(toFile: tmpScript, atomically: true, encoding: .utf8)
 
-        // Make executable
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/chmod")
-        process.arguments = ["+x", tmpScript]
-        try? process.run()
-        process.waitUntilExit()
+        // Make executable and run
+        let chmod = Process()
+        chmod.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        chmod.arguments = ["+x", tmpScript]
+        try? chmod.run()
+        chmod.waitUntilExit()
 
-        // Open in terminal
-        let hasITerm = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.googlecode.iterm2") != nil
-
-        let script: String
-        if hasITerm {
-            script = "tell application \"iTerm\"\nactivate\nset newWindow to (create window with default profile)\ntell current session of newWindow\nwrite text \"/tmp/claude-resume.sh\"\nend tell\nend tell"
-        } else {
-            script = "tell application \"Terminal\"\nactivate\ndo script \"/tmp/claude-resume.sh\"\nend tell"
-        }
-
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            appleScript.executeAndReturnError(&error)
-        }
+        // Use open command to launch in default terminal
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-a", "Terminal", tmpScript]
+        try? open.run()
     }
 
     // MARK: - Export
