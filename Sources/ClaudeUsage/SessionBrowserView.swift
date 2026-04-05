@@ -570,6 +570,9 @@ struct SessionBrowserView: View {
     private func resumeSession(_ session: SessionInfo) {
         let dir = session.projectPath
         let sessionId = session.sessionId
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let claudeBin = "\(home)/.local/bin/claude"
+
         // Detect iTerm2
         let hasITerm = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.googlecode.iterm2") != nil
 
@@ -580,7 +583,7 @@ struct SessionBrowserView: View {
                     activate
                     set newWindow to (create window with default profile)
                     tell current session of newWindow
-                        write text "cd \\"\(dir)\\" && ~/.local/bin/claude --resume \\"\(sessionId)\\""
+                        write text "cd \\"\(dir)\\" && \\"\(claudeBin)\\" --resume \\"\(sessionId)\\""
                     end tell
                 end tell
                 """
@@ -588,7 +591,7 @@ struct SessionBrowserView: View {
             script = """
                 tell application "Terminal"
                     activate
-                    do script "cd \\"\(dir)\\" && ~/.local/bin/claude --resume \\"\(sessionId)\\""
+                    do script "cd \\"\(dir)\\" && \\"\(claudeBin)\\" --resume \\"\(sessionId)\\""
                 end tell
                 """
         }
