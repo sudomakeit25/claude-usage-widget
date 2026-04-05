@@ -160,6 +160,17 @@ final class UsageDataService: ObservableObject {
             return total + input + output
         }
 
+        // Count messages and tools from active session transcripts
+        var liveMessages = 0
+        var liveToolCalls = 0
+        for session in sessions {
+            if let sessionId = session.sessionId {
+                let counts = countMessagesInTranscript(sessionId: sessionId)
+                liveMessages += counts.messages
+                liveToolCalls += counts.toolCalls
+            }
+        }
+
         // Week stats from stats-cache
         let weekActivities = stats?.dailyActivity.filter { $0.date >= weekAgo } ?? []
         let weekTokenEntries = stats?.dailyModelTokens.filter { $0.date >= weekAgo } ?? []
@@ -171,17 +182,49 @@ final class UsageDataService: ObservableObject {
         let bestTodaySessions = max(todayActivity?.sessionCount ?? 0, max(todayMeta.count, liveSessionCount))
         let bestTodayTokens = max(statsTodayTokens, max(metaTokens, liveTokens))
 
+        let bestTodayMessages = max(todayActivity?.messageCount ?? 0, max(metaMessages, liveMessages))
+        let bestTodayToolCalls = max(todayActivity?.toolCallCount ?? 0, liveToolCalls)
+
         return UsageSummary(
-            todayMessages: max(todayActivity?.messageCount ?? 0, metaMessages),
+            todayMessages: bestTodayMessages,
             todaySessions: bestTodaySessions,
-            todayToolCalls: todayActivity?.toolCallCount ?? 0,
+            todayToolCalls: bestTodayToolCalls,
             todayTokens: bestTodayTokens,
-            weekMessages: max(statsWeekMessages, metaMessages),
+            weekMessages: max(statsWeekMessages, bestTodayMessages),
             weekSessions: max(statsWeekSessions, bestTodaySessions),
             weekTokens: max(statsWeekTokens, bestTodayTokens),
             recentDays: stats?.dailyActivity.filter { $0.date >= twoWeeksAgo } ?? [],
             modelBreakdown: stats?.modelUsage ?? [:]
         )
+    }
+
+    private func countMessagesInTranscript(sessionId: String) -> (messages: Int, toolCalls: Int) {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        let projectsDir = "\(home)/.claude/projects"
+
+        // Find the transcript file
+        guard let dirs = try? fm.contentsOfDirectory(atPath: projectsDir) else { return (0, 0) }
+        for dir in dirs {
+            let path = "\(projectsDir)/\(dir)/\(sessionId).jsonl"
+            guard let data = fm.contents(atPath: path),
+                  let content = String(data: data, encoding: .utf8) else { continue }
+
+            var messages = 0
+            var toolCalls = 0
+            for line in content.components(separatedBy: .newlines) where !line.isEmpty {
+                if line.contains("\"type\":\"user\"") && !line.contains("\"tool_result\"") {
+                    messages += 1
+                } else if line.contains("\"type\":\"assistant\"") {
+                    messages += 1
+                    // Count tool_use blocks
+                    let toolCount = line.components(separatedBy: "\"type\":\"tool_use\"").count - 1
+                    toolCalls += toolCount
+                }
+            }
+            return (messages, toolCalls)
+        }
+        return (0, 0)
     }
 
     private func dateString(for date: Date) -> String {
