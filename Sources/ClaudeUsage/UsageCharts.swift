@@ -100,6 +100,11 @@ struct UsageChartsView: View {
                     avgDurationChart
                 }
             }
+
+            // Row 7: Authoritative per-model cost from stats-cache (full width)
+            chartCard("Cost by Model (actual)") {
+                costByModelChart
+            }
         }
         .padding(20)
     }
@@ -341,6 +346,62 @@ struct UsageChartsView: View {
                 .chartXAxis { AxisMarks(values: .stride(by: .day, count: 7)) { _ in AxisGridLine(); AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
                 .chartYAxis { AxisMarks { v in AxisValueLabel { Text("$\(v.as(Double.self) ?? 0, specifier: "%.0f")") } } }
                 .frame(height: 150)
+            }
+        }
+    }
+
+    // MARK: - Cost by Model (authoritative)
+
+    // Loads the stats-cache once per view render; the cache itself is rebuilt
+    // by Claude Code periodically, so this reflects actual billed cost per
+    // model (not an Opus-rate estimate like the other cost charts).
+    private var modelCosts: [ModelCostItem] {
+        let path = (FileManager.default.homeDirectoryForCurrentUser.path as NSString)
+            .appendingPathComponent(".claude/stats-cache.json")
+        guard let data = FileManager.default.contents(atPath: path),
+              let cache = try? JSONDecoder().decode(StatsCache.self, from: data) else { return [] }
+        return cache.modelUsage
+            .map { ModelCostItem(model: prettyModelName($0.key), cost: $0.value.costUSD) }
+            .filter { $0.cost > 0 }
+            .sorted { $0.cost > $1.cost }
+    }
+
+    private struct ModelCostItem { let model: String; let cost: Double }
+
+    private func prettyModelName(_ id: String) -> String {
+        // Convert "claude-opus-4-6-20251015" -> "Opus 4.6"
+        let parts = id.split(separator: "-")
+        guard parts.count >= 4 else { return id }
+        let family = parts[1].capitalized
+        let major = parts[2]
+        let minor = parts[3]
+        return "\(family) \(major).\(minor)"
+    }
+
+    private var costByModelChart: some View {
+        let data = modelCosts
+        let total = data.reduce(0) { $0 + $1.cost }
+        return Group {
+            if !data.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(String(format: "Total: $%.2f", total))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Chart(data, id: \.model) { item in
+                        BarMark(x: .value("Cost", item.cost), y: .value("Model", item.model))
+                            .foregroundStyle(Color.green.gradient)
+                            .cornerRadius(3)
+                            .annotation(position: .trailing) {
+                                Text(String(format: "$%.2f", item.cost))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                    }
+                    .chartXAxis { AxisMarks { v in AxisValueLabel { Text("$\(v.as(Double.self) ?? 0, specifier: "%.0f")") } } }
+                    .frame(height: max(80, CGFloat(data.count) * 32))
+                }
+            } else {
+                Text("No model cost data in stats-cache.json").font(.caption).foregroundStyle(.tertiary)
             }
         }
     }
