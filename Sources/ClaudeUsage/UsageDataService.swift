@@ -19,10 +19,13 @@ final class UsageDataService: ObservableObject {
 
     private let staleThreshold: TimeInterval = 24 * 3600
 
-    // Alert thresholds
-    private let alertThreshold = 80
-    private var fiveHourAlertSent = false
-    private var sevenDayAlertSent = false
+    // Alert thresholds — two-tier like ClaudeMeter (warning + critical)
+    private let warningThreshold = 75
+    private let criticalThreshold = 90
+
+    private enum AlertLevel: Int { case none = 0, warning = 1, critical = 2 }
+    private var fiveHourAlertLevel: AlertLevel = .none
+    private var sevenDayAlertLevel: AlertLevel = .none
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -251,27 +254,40 @@ final class UsageDataService: ObservableObject {
     private func checkAlerts() {
         guard let limits = rateLimits else { return }
 
-        // 5-hour window alert
-        if limits.fiveHour.effectivePercentage >= alertThreshold && !fiveHourAlertSent {
-            fiveHourAlertSent = true
-            sendNotification(
-                title: "Claude Usage: 5-Hour Limit",
-                body: "\(limits.fiveHour.effectivePercentage)% used. Resets in \(limits.fiveHour.timeUntilReset)."
-            )
-        } else if limits.fiveHour.effectivePercentage < alertThreshold {
-            fiveHourAlertSent = false
+        fiveHourAlertLevel = evaluateAlert(
+            windowLabel: "5-Hour Limit",
+            percentage: limits.fiveHour.effectivePercentage,
+            resetText: "Resets in \(limits.fiveHour.timeUntilReset)",
+            currentLevel: fiveHourAlertLevel
+        )
+
+        sevenDayAlertLevel = evaluateAlert(
+            windowLabel: "7-Day Limit",
+            percentage: limits.sevenDay.effectivePercentage,
+            resetText: "Resets \(limits.sevenDay.timeUntilReset)",
+            currentLevel: sevenDayAlertLevel
+        )
+    }
+
+    private func evaluateAlert(windowLabel: String, percentage: Int, resetText: String, currentLevel: AlertLevel) -> AlertLevel {
+        let newLevel: AlertLevel
+        if percentage >= criticalThreshold {
+            newLevel = .critical
+        } else if percentage >= warningThreshold {
+            newLevel = .warning
+        } else {
+            newLevel = .none
         }
 
-        // 7-day window alert
-        if limits.sevenDay.effectivePercentage >= alertThreshold && !sevenDayAlertSent {
-            sevenDayAlertSent = true
+        // Only notify when crossing up into a higher tier
+        if newLevel.rawValue > currentLevel.rawValue {
+            let prefix = newLevel == .critical ? "Critical" : "Warning"
             sendNotification(
-                title: "Claude Usage: 7-Day Limit",
-                body: "\(limits.sevenDay.effectivePercentage)% used. Resets \(limits.sevenDay.timeUntilReset)."
+                title: "Claude \(prefix): \(windowLabel)",
+                body: "\(percentage)% used. \(resetText)."
             )
-        } else if limits.sevenDay.effectivePercentage < alertThreshold {
-            sevenDayAlertSent = false
         }
+        return newLevel
     }
 
     private func sendNotification(title: String, body: String) {
