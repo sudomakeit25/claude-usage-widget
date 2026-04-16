@@ -75,7 +75,9 @@ struct RateLimits: Codable {
 }
 
 struct RateWindow: Codable {
-    let usedPercentage: Int
+    // Claude Code may emit fractional percentages (e.g. 7.000000000000001) or
+    // ints, so decode as Double and round at the edges.
+    let usedPercentage: Double
     let resetsAt: Int
 
     enum CodingKeys: String, CodingKey {
@@ -94,7 +96,7 @@ struct RateWindow: Codable {
 
     /// Effective percentage, accounting for resets that already happened
     var effectivePercentage: Int {
-        hasReset ? 0 : usedPercentage
+        hasReset ? 0 : Int(usedPercentage.rounded())
     }
 
     var timeUntilReset: String {

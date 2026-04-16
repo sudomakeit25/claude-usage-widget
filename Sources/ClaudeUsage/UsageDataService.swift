@@ -59,9 +59,15 @@ final class UsageDataService: ObservableObject {
         }
     }
 
-    // Rate limits from the most recently updated session (they're account-level)
+    // Rate limits are account-level, so every live session sees the same window.
+    // Pick the highest used_percentage among sessions whose resets_at is still in
+    // the future — usage within a window only grows, so that's the freshest valid
+    // snapshot. Sessions with a past resets_at are stale from the previous window.
     var rateLimits: RateLimits? {
-        newestSession?.rateLimits
+        let fresh = sessions
+            .compactMap(\.rateLimits)
+            .filter { !$0.fiveHour.hasReset }
+        return fresh.max(by: { $0.fiveHour.usedPercentage < $1.fiveHour.usedPercentage })
     }
 
     // Track which session file was modified most recently
