@@ -59,9 +59,11 @@ struct ClaudeUsageApp: App {
             HStack(spacing: 3) {
                 Image(systemName: "brain")
                 if let limits = service.rateLimits {
-                    Text("\(limits.fiveHour.effectivePercentage)%")
+                    let pct = limits.fiveHour.effectivePercentage
+                    Text("\(pct)%")
                         .monospacedDigit()
                         .font(.caption)
+                        .foregroundStyle(menuBarColor(pct))
                 }
             }
         }
@@ -80,5 +82,11 @@ struct ClaudeUsageApp: App {
     private func openBrowser() {
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: "session-browser")
+    }
+
+    private func menuBarColor(_ pct: Int) -> Color {
+        if pct >= 80 { return .red }
+        if pct >= 60 { return .orange }
+        return .primary
     }
 }

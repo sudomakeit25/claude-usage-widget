@@ -99,6 +99,37 @@ struct RateWindow: Codable {
         hasReset ? 0 : Int(usedPercentage.rounded())
     }
 
+    /// Burn-rate projection. `windowSeconds` is the full window length (e.g.
+    /// 5*3600 for the 5-hour window). Returns a short one-line summary of
+    /// projected usage at reset, or a hit-threshold warning if on pace to
+    /// breach. Returns nil if the window just started or data is insufficient.
+    func projectionText(windowSeconds: TimeInterval) -> String? {
+        guard !hasReset, usedPercentage > 0 else { return nil }
+        let elapsed = windowSeconds - resetDate.timeIntervalSinceNow
+        guard elapsed > 300 else { return nil } // < 5 min in: burn rate too noisy
+        let burnPerSecond = usedPercentage / elapsed
+        let remaining = resetDate.timeIntervalSinceNow
+        let projected = usedPercentage + burnPerSecond * remaining
+        let projectedInt = Int(projected.rounded())
+
+        // If projected to blow past 80% before reset, lead with the warning.
+        if projected > 80, usedPercentage < 80 {
+            let secondsTo80 = (80 - usedPercentage) / burnPerSecond
+            if secondsTo80 > 0, secondsTo80 < remaining {
+                return "Hits 80% in \(formatDuration(secondsTo80)) at current pace"
+            }
+        }
+        return "Projected \(projectedInt)% at reset"
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        return "\(m)m"
+    }
+
     var timeUntilReset: String {
         let now = Date()
         let reset = resetDate

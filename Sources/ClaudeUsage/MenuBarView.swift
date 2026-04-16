@@ -85,6 +85,7 @@ struct MenuBarView: View {
                 subtitle: "5-hour window",
                 percentage: limits.fiveHour.effectivePercentage,
                 resetText: "Resets in \(limits.fiveHour.timeUntilReset)",
+                projection: limits.fiveHour.projectionText(windowSeconds: 5 * 3600),
                 gradient: [.orange, .red]
             )
             rateLimitRow(
@@ -92,12 +93,13 @@ struct MenuBarView: View {
                 subtitle: "7-day window",
                 percentage: limits.sevenDay.effectivePercentage,
                 resetText: "Resets \(limits.sevenDay.timeUntilReset)",
+                projection: limits.sevenDay.projectionText(windowSeconds: 7 * 86400),
                 gradient: [.blue, .purple]
             )
         }
     }
 
-    private func rateLimitRow(title: String, subtitle: String, percentage: Int, resetText: String, gradient: [Color]) -> some View {
+    private func rateLimitRow(title: String, subtitle: String, percentage: Int, resetText: String, projection: String?, gradient: [Color]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 VStack(alignment: .leading, spacing: 1) {
@@ -121,6 +123,11 @@ struct MenuBarView: View {
             }
             .frame(height: 10)
             Text(resetText).font(.caption2).foregroundStyle(.secondary)
+            if let projection {
+                Text(projection)
+                    .font(.caption2)
+                    .foregroundStyle(projection.hasPrefix("Hits") ? Color.orange : .secondary)
+            }
         }
     }
 
@@ -341,7 +348,7 @@ struct MenuBarView: View {
     // MARK: - Helpers
 
     private func limitColor(_ p: Int) -> Color {
-        p >= 80 ? .red : p >= 50 ? .orange : .green
+        p >= 80 ? .red : p >= 60 ? .orange : .green
     }
 
     private func formatTokens(_ count: Int) -> String {

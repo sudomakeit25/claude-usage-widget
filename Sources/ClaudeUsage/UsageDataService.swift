@@ -19,9 +19,9 @@ final class UsageDataService: ObservableObject {
 
     private let staleThreshold: TimeInterval = 24 * 3600
 
-    // Alert thresholds — two-tier like ClaudeMeter (warning + critical)
-    private let warningThreshold = 75
-    private let criticalThreshold = 90
+    // Alert thresholds — two-tier (warning + critical)
+    private let warningThreshold = 60
+    private let criticalThreshold = 80
 
     private enum AlertLevel: Int { case none = 0, warning = 1, critical = 2 }
     private var fiveHourAlertLevel: AlertLevel = .none
