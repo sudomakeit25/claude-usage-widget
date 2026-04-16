@@ -352,21 +352,45 @@ struct UsageChartsView: View {
 
     // MARK: - Cost by Model (authoritative)
 
-    // Loads the stats-cache once per view render; the cache itself is rebuilt
-    // by Claude Code periodically, so this reflects actual billed cost per
-    // model (not an Opus-rate estimate like the other cost charts).
+    // Stats-cache stores a per-model token breakdown (input/output/cache-read/
+    // cache-creation) but leaves `costUSD` at 0 in current Claude Code builds.
+    // Compute cost ourselves using published Anthropic rates for the model's
+    // family — more accurate than the Opus-flat-rate fallback used elsewhere.
     private var modelCosts: [ModelCostItem] {
         let path = (FileManager.default.homeDirectoryForCurrentUser.path as NSString)
             .appendingPathComponent(".claude/stats-cache.json")
         guard let data = FileManager.default.contents(atPath: path),
               let cache = try? JSONDecoder().decode(StatsCache.self, from: data) else { return [] }
         return cache.modelUsage
-            .map { ModelCostItem(model: prettyModelName($0.key), cost: $0.value.costUSD) }
+            .map { id, u in
+                let rates = pricing(for: id)
+                let cost =
+                    Double(u.inputTokens) * rates.input / 1_000_000 +
+                    Double(u.outputTokens) * rates.output / 1_000_000 +
+                    Double(u.cacheReadInputTokens) * rates.cacheRead / 1_000_000 +
+                    Double(u.cacheCreationInputTokens) * rates.cacheWrite / 1_000_000
+                return ModelCostItem(model: prettyModelName(id), cost: cost)
+            }
             .filter { $0.cost > 0 }
             .sorted { $0.cost > $1.cost }
     }
 
     private struct ModelCostItem { let model: String; let cost: Double }
+
+    private struct ModelRates { let input: Double; let output: Double; let cacheRead: Double; let cacheWrite: Double }
+
+    // $ per 1M tokens. Defaults to Opus pricing for unknown models.
+    private func pricing(for modelId: String) -> ModelRates {
+        let id = modelId.lowercased()
+        if id.contains("haiku") {
+            return ModelRates(input: 1.0, output: 5.0, cacheRead: 0.10, cacheWrite: 1.25)
+        }
+        if id.contains("sonnet") {
+            return ModelRates(input: 3.0, output: 15.0, cacheRead: 0.30, cacheWrite: 3.75)
+        }
+        // Opus (and fallback)
+        return ModelRates(input: 15.0, output: 75.0, cacheRead: 1.50, cacheWrite: 18.75)
+    }
 
     private func prettyModelName(_ id: String) -> String {
         // Convert "claude-opus-4-6-20251015" -> "Opus 4.6"
