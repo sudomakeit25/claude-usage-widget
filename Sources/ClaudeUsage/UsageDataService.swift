@@ -151,17 +151,20 @@ final class UsageDataService: ObservableObject {
         let weekAgo = dateString(for: Date().addingTimeInterval(-7 * 86400))
         let twoWeeksAgo = dateString(for: Date().addingTimeInterval(-14 * 86400))
 
-        // From stats-cache (may be stale)
-        let todayActivity = stats?.dailyActivity.first { $0.date == today }
-        let todayTokenEntry = stats?.dailyModelTokens.first { $0.date == today }
-        let statsTodayTokens = todayTokenEntry?.tokensByModel.values.reduce(0, +) ?? 0
+        // Primary source: compute daily activity from history.jsonl (always fresh)
+        let historyDays = loadDailyActivityFromHistory()
 
-        // From session-meta
+        // Today/week from history
+        let historyToday = historyDays.first { $0.date == today }
+        let historyWeek = historyDays.filter { $0.date >= weekAgo }
+        let historyWeekMessages = historyWeek.reduce(0) { $0 + $1.messageCount }
+        let historyWeekSessions = historyWeek.reduce(0) { $0 + $1.sessionCount }
+
+        // From session-meta (has tokens, which history lacks)
         let todayMeta = metaSessions.filter { $0.startTime.hasPrefix(today) }
-        let metaMessages = todayMeta.reduce(0) { $0 + $1.userMessageCount + $1.assistantMessageCount }
         let metaTokens = todayMeta.reduce(0) { $0 + $1.inputTokens + $1.outputTokens }
 
-        // From live sessions (most current source)
+        // From live sessions (most current source for tokens)
         let liveSessionCount = sessions.count
         let liveTokens = sessions.reduce(0) { total, s in
             let input = s.contextWindow?.totalInputTokens ?? 0
@@ -182,19 +185,17 @@ final class UsageDataService: ObservableObject {
             }
         }
 
-        // Week stats from stats-cache
-        let weekActivities = stats?.dailyActivity.filter { $0.date >= weekAgo } ?? []
+        // Tokens from stats-cache (supplement, may be stale)
+        let todayTokenEntry = stats?.dailyModelTokens.first { $0.date == today }
+        let statsTodayTokens = todayTokenEntry?.tokensByModel.values.reduce(0, +) ?? 0
         let weekTokenEntries = stats?.dailyModelTokens.filter { $0.date >= weekAgo } ?? []
-        let statsWeekMessages = weekActivities.reduce(0) { $0 + $1.messageCount }
-        let statsWeekSessions = weekActivities.reduce(0) { $0 + $1.sessionCount }
         let statsWeekTokens = weekTokenEntries.reduce(0) { $0 + $1.tokensByModel.values.reduce(0, +) }
 
-        // Use the best available data (live > meta > stats-cache)
-        let bestTodaySessions = max(todayActivity?.sessionCount ?? 0, max(todayMeta.count, liveSessionCount))
+        // Use the best available data (history > live > meta > stats-cache)
+        let bestTodaySessions = max(historyToday?.sessionCount ?? 0, liveSessionCount)
+        let bestTodayMessages = max(historyToday?.messageCount ?? 0, liveMessages)
+        let bestTodayToolCalls = max(historyToday?.toolCallCount ?? 0, liveToolCalls)
         let bestTodayTokens = max(statsTodayTokens, max(metaTokens, liveTokens))
-
-        let bestTodayMessages = max(todayActivity?.messageCount ?? 0, max(metaMessages, liveMessages))
-        let bestTodayToolCalls = max(todayActivity?.toolCallCount ?? 0, liveToolCalls)
 
         return UsageSummary(
             todayMessages: bestTodayMessages,
@@ -202,13 +203,69 @@ final class UsageDataService: ObservableObject {
             todaySessions: bestTodaySessions,
             todayToolCalls: bestTodayToolCalls,
             todayTokens: bestTodayTokens,
-            weekMessages: max(statsWeekMessages, bestTodayMessages),
+            weekMessages: max(historyWeekMessages, bestTodayMessages),
             weekUserMessages: liveUserMessages,
-            weekSessions: max(statsWeekSessions, bestTodaySessions),
+            weekSessions: max(historyWeekSessions, bestTodaySessions),
             weekTokens: max(statsWeekTokens, bestTodayTokens),
-            recentDays: stats?.dailyActivity.filter { $0.date >= twoWeeksAgo } ?? [],
-            modelBreakdown: stats?.modelUsage ?? [:]
+            recentDays: historyDays.filter { $0.date >= twoWeeksAgo },
+            modelBreakdown: mergedModelBreakdown(stats: stats)
         )
+    }
+
+    // MARK: - History.jsonl parsing
+
+    // Parse ~/.claude/history.jsonl to compute daily activity. Each line is a
+    // user prompt with a timestamp and sessionId. This is always fresh (written
+    // on every prompt), unlike stats-cache which may be stale for weeks.
+    private func loadDailyActivityFromHistory() -> [DailyActivity] {
+        let path = "\(claudeDir)/history.jsonl"
+        guard let data = FileManager.default.contents(atPath: path),
+              let text = String(data: data, encoding: .utf8) else { return [] }
+
+        struct HistoryEntry: Codable {
+            let timestamp: Double?
+            let sessionId: String?
+        }
+
+        var daily: [String: (messages: Int, sessions: Set<String>)] = [:]
+
+        for line in text.split(separator: "\n") {
+            guard let lineData = line.data(using: .utf8),
+                  let entry = try? JSONDecoder().decode(HistoryEntry.self, from: lineData),
+                  let ts = entry.timestamp else { continue }
+            let date = Date(timeIntervalSince1970: ts / 1000)
+            let key = dateString(for: date)
+            var day = daily[key] ?? (messages: 0, sessions: Set<String>())
+            day.messages += 1
+            if let sid = entry.sessionId { day.sessions.insert(sid) }
+            daily[key] = day
+        }
+
+        return daily.map { key, value in
+            DailyActivity(date: key, messageCount: value.messages, sessionCount: value.sessions.count, toolCallCount: 0)
+        }.sorted { $0.date < $1.date }
+    }
+
+    // Merge live session models into the stats-cache model breakdown so
+    // models that appeared after the cache was computed still show up.
+    private func mergedModelBreakdown(stats: StatsCache?) -> [String: ModelUsage] {
+        var breakdown = stats?.modelUsage ?? [:]
+        for session in sessions {
+            guard let modelId = session.model?.id else { continue }
+            if breakdown[modelId] == nil {
+                let input = session.contextWindow?.totalInputTokens ?? 0
+                let output = session.contextWindow?.totalOutputTokens ?? 0
+                breakdown[modelId] = ModelUsage(
+                    inputTokens: input,
+                    outputTokens: output,
+                    cacheReadInputTokens: 0,
+                    cacheCreationInputTokens: 0,
+                    webSearchRequests: 0,
+                    costUSD: 0
+                )
+            }
+        }
+        return breakdown
     }
 
     private func countMessagesInTranscript(sessionId: String) -> (messages: Int, userMessages: Int, toolCalls: Int) {
