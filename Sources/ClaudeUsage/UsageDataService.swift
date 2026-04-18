@@ -154,11 +154,12 @@ final class UsageDataService: ObservableObject {
         // Primary source: compute daily activity from history.jsonl (always fresh)
         let historyDays = loadDailyActivityFromHistory()
 
-        // Today/week from history
+        // Today/week from history (exclude today from week subtotals to avoid
+        // double-counting — today's best data is added separately below)
         let historyToday = historyDays.first { $0.date == today }
-        let historyWeek = historyDays.filter { $0.date >= weekAgo }
-        let historyWeekMessages = historyWeek.reduce(0) { $0 + $1.messageCount }
-        let historyWeekSessions = historyWeek.reduce(0) { $0 + $1.sessionCount }
+        let historyPriorWeek = historyDays.filter { $0.date >= weekAgo && $0.date != today }
+        let priorWeekMessages = historyPriorWeek.reduce(0) { $0 + $1.messageCount }
+        let priorWeekSessions = historyPriorWeek.reduce(0) { $0 + $1.sessionCount }
 
         // From session-meta (has tokens, which history lacks)
         let todayMeta = metaSessions.filter { $0.startTime.hasPrefix(today) }
@@ -203,9 +204,9 @@ final class UsageDataService: ObservableObject {
             todaySessions: bestTodaySessions,
             todayToolCalls: bestTodayToolCalls,
             todayTokens: bestTodayTokens,
-            weekMessages: max(historyWeekMessages, bestTodayMessages),
+            weekMessages: priorWeekMessages + bestTodayMessages,
             weekUserMessages: liveUserMessages,
-            weekSessions: max(historyWeekSessions, bestTodaySessions),
+            weekSessions: priorWeekSessions + bestTodaySessions,
             weekTokens: max(statsWeekTokens, bestTodayTokens),
             recentDays: historyDays.filter { $0.date >= twoWeeksAgo },
             modelBreakdown: mergedModelBreakdown(stats: stats)

@@ -23,12 +23,24 @@ struct StatusLineData: Codable {
 }
 
 struct ModelInfo: Codable {
+    // Statusline JSON sometimes embeds ANSI escape codes (e.g. "[1m]")
+    // in the model ID. Store the cleaned version.
     let id: String
     let displayName: String
 
     enum CodingKeys: String, CodingKey {
         case id
         case displayName = "display_name"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let rawId = try c.decode(String.self, forKey: .id)
+        // Strip ANSI escape sequences: ESC[...m and bare [...m]
+        id = rawId
+            .replacingOccurrences(of: "\\e\\[[0-9;]*m", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\\[[0-9;]*m\\]?", with: "", options: .regularExpression)
+        displayName = try c.decode(String.self, forKey: .displayName)
     }
 }
 
