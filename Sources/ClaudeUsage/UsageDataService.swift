@@ -27,6 +27,12 @@ final class UsageDataService: ObservableObject {
     private var fiveHourAlertLevel: AlertLevel = .none
     private var sevenDayAlertLevel: AlertLevel = .none
 
+    // Polled rate-limit data from Anthropic's API (fallback when statusline is stale)
+    @Published var polledRateLimits: PolledRateLimits?
+    private let apiClient = AnthropicAPIClient()
+    private var pollTimer: Timer?
+    private let pollInterval: TimeInterval = 5 * 60   // 5 minutes
+
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         claudeDir = "\(home)/.claude"
@@ -35,12 +41,36 @@ final class UsageDataService: ObservableObject {
         statsPath = "\(claudeDir)/stats-cache.json"
         sessionMetaDir = "\(claudeDir)/usage-data/session-meta"
         startAutoRefresh()
+        startRateLimitPolling()
     }
 
     func startAutoRefresh(interval: TimeInterval = 5) {
         refresh()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.refresh()
+        }
+    }
+
+    // MARK: - Rate-limit polling (Anthropic API)
+
+    func startRateLimitPolling() {
+        Task { await self.pollRateLimits() }
+        pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+            Task { await self?.pollRateLimits() }
+        }
+    }
+
+    private func pollRateLimits() async {
+        do {
+            let creds = try KeychainCredentials.load()
+            let polled = try await apiClient.pingForRateLimits(accessToken: creds.accessToken)
+            await MainActor.run {
+                self.polledRateLimits = polled
+                self.checkAlerts()
+            }
+        } catch {
+            // Silent failure: keychain may need user approval on first launch,
+            // or network may be unavailable. Statusline data is still used.
         }
     }
 
@@ -62,15 +92,20 @@ final class UsageDataService: ObservableObject {
         }
     }
 
-    // Rate limits are account-level, so every live session sees the same window.
-    // Pick the highest used_percentage among sessions whose resets_at is still in
-    // the future — usage within a window only grows, so that's the freshest valid
-    // snapshot. Sessions with a past resets_at are stale from the previous window.
+    // Rate limits, in preference order:
+    //   1. Polled data from Anthropic API (always fresh, ground truth)
+    //   2. Live session statusline with non-expired 5h window (fresh local data)
+    //   3. Any session with rate-limit data (stale, but better than nothing)
     var rateLimits: RateLimits? {
-        let fresh = sessions
-            .compactMap(\.rateLimits)
-            .filter { !$0.fiveHour.hasReset }
-        return fresh.max(by: { $0.fiveHour.usedPercentage < $1.fiveHour.usedPercentage })
+        if let polled = polledRateLimits {
+            return polled.toRateLimits()
+        }
+        let all = sessions.compactMap(\.rateLimits)
+        let fresh = all.filter { !$0.fiveHour.hasReset }
+        if let pick = fresh.max(by: { $0.fiveHour.usedPercentage < $1.fiveHour.usedPercentage }) {
+            return pick
+        }
+        return all.max(by: { $0.sevenDay.usedPercentage < $1.sevenDay.usedPercentage })
     }
 
     // Track which session file was modified most recently

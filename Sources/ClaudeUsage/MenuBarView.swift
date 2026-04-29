@@ -84,7 +84,7 @@ struct MenuBarView: View {
                 title: "Current session",
                 subtitle: "5-hour window",
                 percentage: limits.fiveHour.effectivePercentage,
-                resetText: "Resets in \(limits.fiveHour.timeUntilReset)",
+                resetText: resetText(prefix: "Resets in", window: limits.fiveHour),
                 projection: limits.fiveHour.projectionText(windowSeconds: 5 * 3600),
                 gradient: [.orange, .red]
             )
@@ -92,11 +92,18 @@ struct MenuBarView: View {
                 title: "All models",
                 subtitle: "7-day window",
                 percentage: limits.sevenDay.effectivePercentage,
-                resetText: "Resets \(limits.sevenDay.timeUntilReset)",
+                resetText: resetText(prefix: "Resets", window: limits.sevenDay),
                 projection: limits.sevenDay.projectionText(windowSeconds: 7 * 86400),
                 gradient: [.blue, .purple]
             )
         }
+    }
+
+    private func resetText(prefix: String, window: RateWindow) -> String {
+        if window.hasReset {
+            return "Window reset, awaiting refresh"
+        }
+        return "\(prefix) \(window.timeUntilReset)"
     }
 
     private func rateLimitRow(title: String, subtitle: String, percentage: Int, resetText: String, projection: String?, gradient: [Color]) -> some View {
