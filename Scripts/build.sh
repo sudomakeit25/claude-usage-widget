@@ -56,6 +56,27 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
 </plist>
 PLIST
 
+# Sign with Developer ID if available — keeps a stable signature across
+# rebuilds so the keychain ACL ("Always Allow" for Claude OAuth) persists.
+# Falls back to ad-hoc signing if no Developer ID is present.
+SIGN_IDENTITY="${DEVELOPER_ID:-}"
+if [ -z "$SIGN_IDENTITY" ]; then
+    SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+        | grep "Developer ID Application" | head -1 \
+        | sed -E 's/^[[:space:]]*[0-9]+\)[[:space:]]+[A-F0-9]+[[:space:]]+"(.*)"$/\1/')
+fi
+ENTITLEMENTS="$PROJECT_DIR/Resources/$APP_NAME.entitlements"
+if [ -n "$SIGN_IDENTITY" ] && [ -f "$ENTITLEMENTS" ]; then
+    echo "Signing with: $SIGN_IDENTITY"
+    codesign --force --options runtime \
+        --entitlements "$ENTITLEMENTS" \
+        --sign "$SIGN_IDENTITY" \
+        "$APP_BUNDLE"
+else
+    echo "No Developer ID found — signing ad-hoc (keychain ACL will reset on each rebuild)"
+    codesign --force --sign - "$APP_BUNDLE"
+fi
+
 echo ""
 echo "Build complete: $APP_BUNDLE"
 echo ""
