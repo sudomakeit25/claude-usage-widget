@@ -500,11 +500,44 @@ struct UsageChartsView: View {
         return grouped.map { DailyCount(date: $0.key, count: $0.value.count) }.sorted { $0.date < $1.date }.suffix(30).map { $0 }
     }
 
+    // Attribute cost to the day each token was actually consumed (via the
+    // per-day breakdown from transcript timestamps). Long-running sessions
+    // now show up on every day they were active, not just their start day.
+    // Falls back to session start_time for sessions without transcript data.
     private var dailyCost: [DailyCostItem] {
+        let dayFmt = DateFormatter()
+        dayFmt.dateFormat = "yyyy-MM-dd"
+        dayFmt.timeZone = TimeZone.current
         let cal = Calendar.current
-        let grouped = Dictionary(grouping: sessions) { cal.startOfDay(for: $0.startTime) }
-        return grouped.map { DailyCostItem(date: $0.key, cost: $0.value.reduce(0) { $0 + $1.estimatedCost }, sessions: $0.value.sorted { $0.estimatedCost > $1.estimatedCost }) }
-            .sorted { $0.date < $1.date }.suffix(30).map { $0 }
+
+        // dateKey -> (total cost, contributing sessions)
+        var bucket: [String: (cost: Double, sessions: [SessionInfo])] = [:]
+
+        for s in sessions {
+            if !s.dailyTokens.isEmpty {
+                // Per-day attribution from transcript
+                for (dayKey, tokens) in s.dailyTokens {
+                    guard dayKey != "unknown" else { continue }
+                    var entry = bucket[dayKey] ?? (0, [])
+                    entry.cost += tokens.estimatedCost
+                    if !entry.sessions.contains(s) { entry.sessions.append(s) }
+                    bucket[dayKey] = entry
+                }
+            } else {
+                // No transcript — fall back to start_time attribution
+                let dayKey = dayFmt.string(from: s.startTime)
+                var entry = bucket[dayKey] ?? (0, [])
+                entry.cost += s.estimatedCost
+                entry.sessions.append(s)
+                bucket[dayKey] = entry
+            }
+        }
+
+        return bucket.compactMap { dayKey, entry -> DailyCostItem? in
+            guard let date = dayFmt.date(from: dayKey).map({ cal.startOfDay(for: $0) }) else { return nil }
+            let ordered = entry.sessions.sorted { $0.estimatedCost > $1.estimatedCost }
+            return DailyCostItem(date: date, cost: entry.cost, sessions: ordered)
+        }.sorted { $0.date < $1.date }.suffix(30).map { $0 }
     }
 
     private var topTools: [ToolCount] {

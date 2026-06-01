@@ -16,22 +16,25 @@ struct PolledRateLimits {
     // Convert to the local RateLimits shape so the existing UI can render it.
     // The API may return a `resets_at` in the past when the user is between
     // bursts — but the utilization figure is still the live ground truth. To
-    // prevent the existing `hasReset` logic from zeroing out real usage, we
-    // bump any past `resets_at` to a sensible future time (now + window length).
+    // prevent the existing `hasReset` logic from zeroing out real usage, bump
+    // past timestamps (or missing ones) to now + window length. Legitimate
+    // future timestamps are used as-is so the UI shows the real reset time.
     func toRateLimits() -> RateLimits {
         let now = Date().timeIntervalSince1970
-        let fiveHourFallback = now + 5 * 3600
-        let sevenDayFallback = now + 7 * 86400
-        let fiveHourReset = fiveHourResetsAt.map { $0.timeIntervalSince1970 } ?? fiveHourFallback
-        let sevenDayReset = sevenDayResetsAt.map { $0.timeIntervalSince1970 } ?? sevenDayFallback
+        func reset(_ apiValue: Date?, fallbackSeconds: TimeInterval) -> Int {
+            if let v = apiValue?.timeIntervalSince1970, v > now {
+                return Int(v)
+            }
+            return Int(now + fallbackSeconds)
+        }
         return RateLimits(
             fiveHour: RateWindow(
                 usedPercentage: fiveHourPercent,
-                resetsAt: Int(max(fiveHourReset, fiveHourFallback))
+                resetsAt: reset(fiveHourResetsAt, fallbackSeconds: 5 * 3600)
             ),
             sevenDay: RateWindow(
                 usedPercentage: sevenDayPercent,
-                resetsAt: Int(max(sevenDayReset, sevenDayFallback))
+                resetsAt: reset(sevenDayResetsAt, fallbackSeconds: 7 * 86400)
             )
         )
     }

@@ -19,6 +19,7 @@ struct SessionBrowserView: View {
     @State private var sessionToRename: SessionInfo?
     @State private var showCharts = false
     @State private var showMemory = false
+    @State private var showInvocations = false
 
     var body: some View {
         ZStack {
@@ -299,7 +300,24 @@ struct SessionBrowserView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if showCharts {
+        if showInvocations {
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    Button(action: { showInvocations = false }) {
+                        Label("Back to Sessions", systemImage: "chevron.left")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    Spacer()
+                }
+                .padding(8)
+                .background(Color(nsColor: .windowBackgroundColor))
+                Divider()
+
+                InvocationsView(sessions: sessionService.allSessions)
+            }
+        } else if showCharts {
             VStack(spacing: 0) {
                 HStack {
                     Spacer()
@@ -436,10 +454,17 @@ struct SessionBrowserView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Button(action: { showCharts = true }) {
-                Label("View Usage Charts", systemImage: "chart.bar")
+            HStack(spacing: 12) {
+                Button(action: { showCharts = true }) {
+                    Label("Usage Charts", systemImage: "chart.bar")
+                }
+                .buttonStyle(.bordered)
+
+                Button(action: { showInvocations = true }) {
+                    Label("Recent Invocations", systemImage: "list.bullet.rectangle")
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
             .padding(.top, 8)
 
             Spacer()
