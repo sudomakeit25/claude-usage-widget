@@ -105,6 +105,11 @@ struct UsageChartsView: View {
             chartCard("Cost by Model (actual)") {
                 costByModelChart
             }
+
+            // Row 8: Monthly cost (full width)
+            chartCard("Monthly Cost") {
+                monthlyCostChart
+            }
         }
         .padding(20)
     }
@@ -402,6 +407,73 @@ struct UsageChartsView: View {
         return "\(family) \(major).\(minor)"
     }
 
+    // MARK: - Monthly Cost
+
+    private struct MonthlyCostItem { let monthKey: String; let label: String; let cost: Double }
+
+    private var monthlyCost: [MonthlyCostItem] {
+        // Aggregate daily token data by month key "yyyy-MM"
+        var byMonth: [String: Double] = [:]
+        for s in sessions {
+            if !s.dailyTokens.isEmpty {
+                for (dayKey, tokens) in s.dailyTokens {
+                    guard dayKey.count >= 7 else { continue }
+                    let monthKey = String(dayKey.prefix(7))
+                    byMonth[monthKey, default: 0] += tokens.estimatedCost
+                }
+            } else {
+                // Fallback: attribute to session start month
+                let monthKey = monthKeyFormatter.string(from: s.startTime)
+                byMonth[monthKey, default: 0] += s.estimatedCost
+            }
+        }
+
+        let labelFmt = DateFormatter()
+        labelFmt.dateFormat = "MMM yyyy"
+
+        return byMonth.compactMap { key, cost -> MonthlyCostItem? in
+            guard let date = monthKeyFormatter.date(from: key) else { return nil }
+            return MonthlyCostItem(monthKey: key, label: labelFmt.string(from: date), cost: cost)
+        }.sorted { $0.monthKey < $1.monthKey }
+    }
+
+    private var monthKeyFormatter: DateFormatter {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM"
+        return f
+    }
+
+    private var monthlyCostChart: some View {
+        let data = monthlyCost
+        let total = data.reduce(0) { $0 + $1.cost }
+        return Group {
+            if !data.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Total: \(String(format: "$%.2f", total))  ·  Avg/month: \(String(format: "$%.2f", total / Double(data.count)))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Chart(data, id: \.monthKey) { item in
+                        BarMark(
+                            x: .value("Month", item.label),
+                            y: .value("Cost", item.cost)
+                        )
+                        .foregroundStyle(Color.orange.gradient)
+                        .cornerRadius(3)
+                        .annotation(position: .top) {
+                            Text(String(format: "$%.0f", item.cost))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .chartYAxis { AxisMarks { v in AxisValueLabel { Text("$\(v.as(Double.self) ?? 0, specifier: "%.0f")") } } }
+                    .frame(height: 180)
+                }
+            } else {
+                Text("No monthly data").font(.caption).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
     private var costByModelChart: some View {
         let data = modelCosts
         let total = data.reduce(0) { $0 + $1.cost }
@@ -504,18 +576,18 @@ struct UsageChartsView: View {
     // per-day breakdown from transcript timestamps). Long-running sessions
     // now show up on every day they were active, not just their start day.
     // Falls back to session start_time for sessions without transcript data.
-    private var dailyCost: [DailyCostItem] {
+    // The 30-day-trimmed version is used for the bar chart; the full series
+    // (`dailyCostAll`) is used for cumulative so all-time totals match.
+    private var dailyCostAll: [DailyCostItem] {
         let dayFmt = DateFormatter()
         dayFmt.dateFormat = "yyyy-MM-dd"
         dayFmt.timeZone = TimeZone.current
         let cal = Calendar.current
 
-        // dateKey -> (total cost, contributing sessions)
         var bucket: [String: (cost: Double, sessions: [SessionInfo])] = [:]
 
         for s in sessions {
             if !s.dailyTokens.isEmpty {
-                // Per-day attribution from transcript
                 for (dayKey, tokens) in s.dailyTokens {
                     guard dayKey != "unknown" else { continue }
                     var entry = bucket[dayKey] ?? (0, [])
@@ -524,7 +596,6 @@ struct UsageChartsView: View {
                     bucket[dayKey] = entry
                 }
             } else {
-                // No transcript — fall back to start_time attribution
                 let dayKey = dayFmt.string(from: s.startTime)
                 var entry = bucket[dayKey] ?? (0, [])
                 entry.cost += s.estimatedCost
@@ -537,7 +608,11 @@ struct UsageChartsView: View {
             guard let date = dayFmt.date(from: dayKey).map({ cal.startOfDay(for: $0) }) else { return nil }
             let ordered = entry.sessions.sorted { $0.estimatedCost > $1.estimatedCost }
             return DailyCostItem(date: date, cost: entry.cost, sessions: ordered)
-        }.sorted { $0.date < $1.date }.suffix(30).map { $0 }
+        }.sorted { $0.date < $1.date }
+    }
+
+    private var dailyCost: [DailyCostItem] {
+        dailyCostAll.suffix(30).map { $0 }
     }
 
     private var topTools: [ToolCount] {
@@ -585,7 +660,9 @@ struct UsageChartsView: View {
     }
 
     private func computeCumulativeCost() -> [CumulativeCostItem] {
-        let sorted = dailyCost.sorted { $0.date < $1.date }
+        // Use the full history (not the 30-day-trimmed `dailyCost`) so the
+        // running total reflects all-time spend, matching the Monthly chart.
+        let sorted = dailyCostAll.sorted { $0.date < $1.date }
         var cumulative = 0.0
         return sorted.map { cumulative += $0.cost; return CumulativeCostItem(date: $0.date, cost: cumulative) }
     }

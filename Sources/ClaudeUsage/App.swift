@@ -50,11 +50,15 @@ extension Notification.Name {
 struct ClaudeUsageApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var service = UsageDataService()
+    @StateObject private var sessionListService = SessionListService()
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarView(service: service, openBrowser: { openBrowser() })
+            MenuBarView(service: service, sessionService: sessionListService, openBrowser: { openBrowser() })
+                .onAppear {
+                    if sessionListService.allSessions.isEmpty { sessionListService.loadAll() }
+                }
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: "brain")

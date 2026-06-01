@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var service: UsageDataService
+    @ObservedObject var sessionService: SessionListService
     var openBrowser: () -> Void = {}
 
     var body: some View {
@@ -29,6 +30,9 @@ struct MenuBarView: View {
                 weekSection
                 Divider().padding(.vertical, 6)
 
+                monthSection
+                Divider().padding(.vertical, 6)
+
                 chartSection
                 Divider().padding(.vertical, 6)
 
@@ -42,7 +46,7 @@ struct MenuBarView: View {
             }
             .padding(14)
         }
-        .frame(width: 320, height: 600)
+        .frame(width: 320, height: 640)
     }
 
     // MARK: - Header
@@ -227,6 +231,51 @@ struct MenuBarView: View {
                 ColorStatBadge(icon: "number", value: formatTokens(service.summary.weekTokens), label: "Tokens", color: .cyan)
             }
         }
+    }
+
+    // MARK: - This Month
+
+    private var monthSection: some View {
+        let stats = computeMonthStats()
+        return VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("This Month", icon: "calendar.badge.clock", color: .orange)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                ColorStatBadge(icon: "dollarsign.circle.fill", value: String(format: "$%.0f", stats.cost), label: "API equiv", color: .orange)
+                ColorStatBadge(icon: "terminal.fill", value: "\(stats.sessions)", label: "Sessions", color: .green)
+                ColorStatBadge(icon: "number", value: formatTokens(stats.tokens), label: "Tokens", color: .cyan)
+            }
+        }
+    }
+
+    private func computeMonthStats() -> (cost: Double, sessions: Int, tokens: Int) {
+        let cal = Calendar.current
+        let now = Date()
+        let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: now)) ?? now
+        let dayFmt = DateFormatter()
+        dayFmt.dateFormat = "yyyy-MM-dd"
+        let monthPrefix = String(dayFmt.string(from: monthStart).prefix(7))
+
+        var cost = 0.0
+        var tokens = 0
+        var sessionIds = Set<String>()
+
+        for s in sessionService.allSessions {
+            var sessionContributedThisMonth = false
+            if !s.dailyTokens.isEmpty {
+                for (dayKey, t) in s.dailyTokens where dayKey.hasPrefix(monthPrefix) {
+                    cost += t.estimatedCost
+                    tokens += t.input + t.output + t.cacheRead + t.cacheCreate
+                    sessionContributedThisMonth = true
+                }
+            } else if s.startTime >= monthStart {
+                cost += s.estimatedCost
+                tokens += s.inputTokens + s.outputTokens
+                sessionContributedThisMonth = true
+            }
+            if sessionContributedThisMonth { sessionIds.insert(s.sessionId) }
+        }
+
+        return (cost, sessionIds.count, tokens)
     }
 
     // MARK: - Activity Chart
