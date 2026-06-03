@@ -101,8 +101,8 @@ struct UsageChartsView: View {
                 }
             }
 
-            // Row 7: Authoritative per-model cost from stats-cache (full width)
-            chartCard("Cost by Model (actual)") {
+            // Row 7: Per-model cost from transcripts (full width)
+            chartCard("Cost by Model") {
                 costByModelChart
             }
 
@@ -355,25 +355,33 @@ struct UsageChartsView: View {
         }
     }
 
-    // MARK: - Cost by Model (authoritative)
+    // MARK: - Cost by Model (from transcripts)
 
-    // Stats-cache stores a per-model token breakdown (input/output/cache-read/
-    // cache-creation) but leaves `costUSD` at 0 in current Claude Code builds.
-    // Compute cost ourselves using published Anthropic rates for the model's
-    // family — more accurate than the Opus-flat-rate fallback used elsewhere.
+    // Sum per-model token usage across all sessions' transcripts, then price
+    // by model family. Transcripts include every API call ever made (with
+    // model + usage tags), so this matches the cumulative/monthly totals.
+    // Older versions read from stats-cache.json which only tracks ~50% of
+    // sessions and lags by days.
     private var modelCosts: [ModelCostItem] {
-        let path = (FileManager.default.homeDirectoryForCurrentUser.path as NSString)
-            .appendingPathComponent(".claude/stats-cache.json")
-        guard let data = FileManager.default.contents(atPath: path),
-              let cache = try? JSONDecoder().decode(StatsCache.self, from: data) else { return [] }
-        return cache.modelUsage
-            .map { id, u in
+        var byModel: [String: DayTokens] = [:]
+        for s in sessions {
+            for (model, tokens) in s.modelTokens {
+                var entry = byModel[model] ?? DayTokens()
+                entry.input += tokens.input
+                entry.output += tokens.output
+                entry.cacheRead += tokens.cacheRead
+                entry.cacheCreate += tokens.cacheCreate
+                byModel[model] = entry
+            }
+        }
+        return byModel
+            .map { id, t in
                 let rates = pricing(for: id)
                 let cost =
-                    Double(u.inputTokens) * rates.input / 1_000_000 +
-                    Double(u.outputTokens) * rates.output / 1_000_000 +
-                    Double(u.cacheReadInputTokens) * rates.cacheRead / 1_000_000 +
-                    Double(u.cacheCreationInputTokens) * rates.cacheWrite / 1_000_000
+                    Double(t.input) * rates.input / 1_000_000 +
+                    Double(t.output) * rates.output / 1_000_000 +
+                    Double(t.cacheRead) * rates.cacheRead / 1_000_000 +
+                    Double(t.cacheCreate) * rates.cacheWrite / 1_000_000
                 return ModelCostItem(model: prettyModelName(id), cost: cost)
             }
             .filter { $0.cost > 0 }

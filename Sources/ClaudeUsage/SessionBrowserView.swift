@@ -761,6 +761,17 @@ struct SidebarSessionRow: View {
                     .buttonStyle(.borderless)
                     .help("Resume in Terminal")
                 } else {
+                    if let model = session.shortModelName {
+                        Text(model)
+                            .font(.system(size: 9, weight: .medium, design: .rounded))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(modelBadgeColor(model).opacity(0.18))
+                            )
+                            .foregroundStyle(modelBadgeColor(model))
+                    }
                     if session.transcriptPath != nil {
                         Circle()
                             .fill(Color.blue)
@@ -807,5 +818,17 @@ struct SidebarSessionRow: View {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
         return f.localizedString(for: date, relativeTo: Date())
+    }
+
+    // Color a model badge by family so glancing at the list shows the
+    // model mix at a glance. Newer Opus tints lean warmer.
+    private func modelBadgeColor(_ label: String) -> Color {
+        let l = label.lowercased()
+        if l.contains("haiku") { return .green }
+        if l.contains("sonnet") { return .cyan }
+        if l.contains("4.8") { return .pink }
+        if l.contains("4.7") { return .purple }
+        if l.contains("4.6") { return .indigo }
+        return .gray
     }
 }

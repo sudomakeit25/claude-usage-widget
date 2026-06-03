@@ -33,6 +33,9 @@ struct SessionInfo: Identifiable, Hashable {
     // Per-day token usage keyed by "yyyy-MM-dd" (UTC). Lets the cost chart
     // attribute long-running sessions to the days they were actually active.
     var dailyTokens: [String: DayTokens] = [:]
+    // Per-model token usage. Lets the cost-by-model chart use transcript
+    // data instead of the often-stale stats-cache.
+    var modelTokens: [String: DayTokens] = [:]
     let linesAdded: Int
     let linesRemoved: Int
     let transcriptPath: String?
@@ -43,6 +46,26 @@ struct SessionInfo: Identifiable, Hashable {
 
     var totalMessages: Int { userMessageCount + assistantMessageCount }
     var displayTitle: String { customTitle ?? (firstPrompt.isEmpty ? "Session" : firstPrompt) }
+
+    // The model that accounted for the most input+output tokens in this session.
+    // A session may span model upgrades (e.g. Opus 4.6 → 4.7 → 4.8), so we
+    // pick the dominant one. nil if no transcript data is available.
+    var primaryModel: String? {
+        guard !modelTokens.isEmpty else { return nil }
+        return modelTokens.max(by: { lhs, rhs in
+            (lhs.value.input + lhs.value.output) < (rhs.value.input + rhs.value.output)
+        })?.key
+    }
+
+    // Short label like "Opus 4.7" or "Sonnet 4.6". Returns nil if no model
+    // info is available so callers can hide the badge entirely.
+    var shortModelName: String? {
+        guard let id = primaryModel else { return nil }
+        let parts = id.split(separator: "-")
+        guard parts.count >= 4 else { return id }
+        let family = parts[1].capitalized
+        return "\(family) \(parts[2]).\(parts[3])"
+    }
 
     // Use live cost if available, otherwise estimate from tokens at Opus rates
     // ($15/M in, $75/M out, $1.50/M cache-read, $18.75/M cache-write). For
@@ -200,13 +223,15 @@ final class SessionListService: ObservableObject {
             let projectPath = status.cwd ?? "Unknown"
             let transcriptPath = findTranscript(sessionId: sessionId, projectPath: projectPath)
 
-            // Parse transcript for accurate token usage including cache reads and per-day breakdown
+            // Parse transcript for accurate token usage including cache reads and per-day/per-model breakdown
             let perDay: [String: DayTokens]
+            let perModel: [String: DayTokens]
             let total: DayTokens
             if let tp = transcriptPath {
-                (perDay, total) = parseTranscriptUsage(at: tp)
+                (perDay, perModel, total) = parseTranscriptUsage(at: tp)
             } else {
                 perDay = [:]
+                perModel = [:]
                 total = DayTokens(
                     input: status.contextWindow?.totalInputTokens ?? 0,
                     output: status.contextWindow?.totalOutputTokens ?? 0,
@@ -230,6 +255,7 @@ final class SessionListService: ObservableObject {
                 cacheReadTokens: total.cacheRead,
                 cacheCreationTokens: total.cacheCreate,
                 dailyTokens: perDay,
+                modelTokens: perModel,
                 linesAdded: status.cost?.totalLinesAdded ?? 0,
                 linesRemoved: status.cost?.totalLinesRemoved ?? 0,
                 transcriptPath: transcriptPath
@@ -437,14 +463,16 @@ final class SessionListService: ObservableObject {
             let projectName = extractProjectName(projectPath)
             let transcriptPath = findTranscript(sessionId: meta.sessionId, projectPath: projectPath)
 
-            // Get cache token counts and per-day breakdown by parsing the
-            // transcript (session-meta has neither cache fields nor per-day data)
+            // Get cache token counts and per-day/per-model breakdowns by
+            // parsing the transcript (session-meta has neither)
             let perDay: [String: DayTokens]
+            let perModel: [String: DayTokens]
             let total: DayTokens
             if let tp = transcriptPath {
-                (perDay, total) = parseTranscriptUsage(at: tp)
+                (perDay, perModel, total) = parseTranscriptUsage(at: tp)
             } else {
                 perDay = [:]
+                perModel = [:]
                 total = DayTokens(input: meta.inputTokens, output: meta.outputTokens, cacheRead: 0, cacheCreate: 0)
             }
 
@@ -463,6 +491,7 @@ final class SessionListService: ObservableObject {
                 cacheReadTokens: total.cacheRead,
                 cacheCreationTokens: total.cacheCreate,
                 dailyTokens: perDay,
+                modelTokens: perModel,
                 linesAdded: meta.linesAdded ?? 0,
                 linesRemoved: meta.linesRemoved ?? 0,
                 transcriptPath: transcriptPath
@@ -492,16 +521,15 @@ final class SessionListService: ObservableObject {
         return String(components.last ?? "Unknown")
     }
 
-    // Scan a transcript JSONL for usage data, broken down by day. Uses each
-    // entry's `timestamp` to bin tokens to the right date — this is what
-    // makes long-running sessions show up on the days they were active,
-    // not just their start day. Returns both per-day buckets and an
-    // aggregate total for callers that only want the sum.
-    private func parseTranscriptUsage(at path: String) -> (perDay: [String: DayTokens], total: DayTokens) {
+    // Scan a transcript JSONL for usage data, broken down by day and by
+    // model. Each transcript line carries a timestamp and the model that
+    // produced the message, so we can bin per-message tokens to both axes.
+    private func parseTranscriptUsage(at path: String) -> (perDay: [String: DayTokens], perModel: [String: DayTokens], total: DayTokens) {
         guard let data = FileManager.default.contents(atPath: path),
-              let text = String(data: data, encoding: .utf8) else { return ([:], DayTokens()) }
+              let text = String(data: data, encoding: .utf8) else { return ([:], [:], DayTokens()) }
 
         var perDay: [String: DayTokens] = [:]
+        var perModel: [String: DayTokens] = [:]
         var total = DayTokens()
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -532,14 +560,23 @@ final class SessionListService: ObservableObject {
             } else {
                 dayKey = "unknown"
             }
-            var bucket = perDay[dayKey] ?? DayTokens()
-            bucket.input += input
-            bucket.output += output
-            bucket.cacheRead += cacheRead
-            bucket.cacheCreate += cacheCreate
-            perDay[dayKey] = bucket
+            var dayBucket = perDay[dayKey] ?? DayTokens()
+            dayBucket.input += input
+            dayBucket.output += output
+            dayBucket.cacheRead += cacheRead
+            dayBucket.cacheCreate += cacheCreate
+            perDay[dayKey] = dayBucket
+
+            // Bin by model
+            let modelKey = (msg["model"] as? String) ?? "unknown"
+            var modelBucket = perModel[modelKey] ?? DayTokens()
+            modelBucket.input += input
+            modelBucket.output += output
+            modelBucket.cacheRead += cacheRead
+            modelBucket.cacheCreate += cacheCreate
+            perModel[modelKey] = modelBucket
         }
-        return (perDay, total)
+        return (perDay, perModel, total)
     }
 
     private func findTranscript(sessionId: String, projectPath: String) -> String? {
