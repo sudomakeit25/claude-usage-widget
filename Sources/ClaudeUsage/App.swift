@@ -57,7 +57,7 @@ struct ClaudeUsageApp: App {
         MenuBarExtra {
             MenuBarView(service: service, sessionService: sessionListService, openBrowser: { openBrowser() })
                 .onAppear {
-                    if sessionListService.allSessions.isEmpty { sessionListService.loadAll() }
+                    sessionListService.loadAll()
                 }
         } label: {
             HStack(spacing: 3) {

@@ -13,12 +13,28 @@ final class UsageDataService: ObservableObject {
     @Published var summary: UsageSummary = .empty
     @Published var recentSessions: [SessionMeta] = []
 
+    // Per live session transcript stats, keyed by session id
+    @Published var transcriptStats: [String: TranscriptCounter.Counts] = [:]
+    // Recent pace against the 5-hour limit and API-equivalent spend
+    @Published var burnRate: BurnRateTracker.Snapshot?
+    private var burnTracker = BurnRateTracker()
+
+    // Transcript size above which a session is flagged as large
+    static let largeTranscriptBytes: UInt64 = 100 * 1_000_000
+    static let hugeTranscriptBytes: UInt64 = 250 * 1_000_000
+    private var largeTranscriptAlerted = Set<String>()
+
     private let claudeDir: String
     private let sessionStatusDir: String
     private let rateLimitsPath: String
     private let statsPath: String
     private let sessionMetaDir: String
     private var refreshTimer: Timer?
+    private var refreshInFlight = false
+
+    // Only touched from refresh passes, which never overlap
+    private let transcriptCounter = TranscriptCounter()
+    private var transcriptPaths: [String: String] = [:]
 
     private let staleThreshold: TimeInterval = 24 * 3600
 
@@ -80,19 +96,27 @@ final class UsageDataService: ObservableObject {
     }
 
     func refresh() {
+        // Skip while the previous pass is still running so slow passes
+        // (large transcripts) can't pile up on the background queue
+        guard !refreshInFlight else { return }
+        refreshInFlight = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             let liveSessions = self.loadAllLiveSessions()
             let stats = self.loadStatsCache()
             let metaSessions = self.loadRecentSessions(limit: 5)
-            let summary = self.buildSummary(stats: stats, metaSessions: metaSessions)
+            let (summary, transcriptStats) = self.buildSummary(stats: stats, metaSessions: metaSessions, liveSessions: liveSessions)
 
             DispatchQueue.main.async {
                 self.sessions = liveSessions
                 self.summary = summary
+                self.transcriptStats = transcriptStats
                 self.recentSessions = metaSessions
                 self.lastUpdated = Date()
+                self.updateBurnRate()
                 self.checkAlerts()
+                self.checkLargeTranscripts()
+                self.refreshInFlight = false
             }
         }
     }
@@ -186,7 +210,7 @@ final class UsageDataService: ObservableObject {
 
     // MARK: - Summary
 
-    private func buildSummary(stats: StatsCache?, metaSessions: [SessionMeta]) -> UsageSummary {
+    private func buildSummary(stats: StatsCache?, metaSessions: [SessionMeta], liveSessions: [StatusLineData]) -> (UsageSummary, [String: TranscriptCounter.Counts]) {
         let today = dateString(for: Date())
         let weekAgo = dateString(for: Date().addingTimeInterval(-7 * 86400))
         let twoWeeksAgo = dateString(for: Date().addingTimeInterval(-14 * 86400))
@@ -206,8 +230,8 @@ final class UsageDataService: ObservableObject {
         let metaTokens = todayMeta.reduce(0) { $0 + $1.inputTokens + $1.outputTokens }
 
         // From live sessions (most current source for tokens)
-        let liveSessionCount = sessions.count
-        let liveTokens = sessions.reduce(0) { total, s in
+        let liveSessionCount = liveSessions.count
+        let liveTokens = liveSessions.reduce(0) { total, s in
             let input = s.contextWindow?.totalInputTokens ?? 0
             let output = s.contextWindow?.totalOutputTokens ?? 0
             return total + input + output
@@ -217,14 +241,20 @@ final class UsageDataService: ObservableObject {
         var liveMessages = 0
         var liveUserMessages = 0
         var liveToolCalls = 0
-        for session in sessions {
-            if let sessionId = session.sessionId {
-                let counts = countMessagesInTranscript(sessionId: sessionId)
+        var livePaths = Set<String>()
+        var transcriptStats: [String: TranscriptCounter.Counts] = [:]
+        for session in liveSessions {
+            if let sessionId = session.sessionId,
+               let path = transcriptPath(sessionId: sessionId),
+               let counts = transcriptCounter.counts(atPath: path) {
+                livePaths.insert(path)
+                transcriptStats[sessionId] = counts
                 liveMessages += counts.messages
                 liveUserMessages += counts.userMessages
                 liveToolCalls += counts.toolCalls
             }
         }
+        transcriptCounter.retainOnly(paths: livePaths)
 
         // Tokens from stats-cache (supplement, may be stale)
         let todayTokenEntry = stats?.dailyModelTokens.first { $0.date == today }
@@ -238,7 +268,7 @@ final class UsageDataService: ObservableObject {
         let bestTodayToolCalls = max(historyToday?.toolCallCount ?? 0, liveToolCalls)
         let bestTodayTokens = max(statsTodayTokens, max(metaTokens, liveTokens))
 
-        return UsageSummary(
+        let summary = UsageSummary(
             todayMessages: bestTodayMessages,
             todayUserMessages: liveUserMessages,
             todaySessions: bestTodaySessions,
@@ -249,8 +279,9 @@ final class UsageDataService: ObservableObject {
             weekSessions: priorWeekSessions + bestTodaySessions,
             weekTokens: max(statsWeekTokens, bestTodayTokens),
             recentDays: historyDays.filter { $0.date >= twoWeeksAgo },
-            modelBreakdown: mergedModelBreakdown(stats: stats)
+            modelBreakdown: mergedModelBreakdown(stats: stats, liveSessions: liveSessions)
         )
+        return (summary, transcriptStats)
     }
 
     // MARK: - History.jsonl parsing
@@ -289,9 +320,9 @@ final class UsageDataService: ObservableObject {
 
     // Merge live session models into the stats-cache model breakdown so
     // models that appeared after the cache was computed still show up.
-    private func mergedModelBreakdown(stats: StatsCache?) -> [String: ModelUsage] {
+    private func mergedModelBreakdown(stats: StatsCache?, liveSessions: [StatusLineData]) -> [String: ModelUsage] {
         var breakdown = stats?.modelUsage ?? [:]
-        for session in sessions {
+        for session in liveSessions {
             guard let modelId = session.model?.id else { continue }
             if breakdown[modelId] == nil {
                 let input = session.contextWindow?.totalInputTokens ?? 0
@@ -309,36 +340,21 @@ final class UsageDataService: ObservableObject {
         return breakdown
     }
 
-    private func countMessagesInTranscript(sessionId: String) -> (messages: Int, userMessages: Int, toolCalls: Int) {
+    private func transcriptPath(sessionId: String) -> String? {
         let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser.path
-        let projectsDir = "\(home)/.claude/projects"
-
-        guard let dirs = try? fm.contentsOfDirectory(atPath: projectsDir) else { return (0, 0, 0) }
+        if let cached = transcriptPaths[sessionId], fm.fileExists(atPath: cached) {
+            return cached
+        }
+        let projectsDir = "\(claudeDir)/projects"
+        guard let dirs = try? fm.contentsOfDirectory(atPath: projectsDir) else { return nil }
         for dir in dirs {
             let path = "\(projectsDir)/\(dir)/\(sessionId).jsonl"
-            guard let data = fm.contents(atPath: path),
-                  let content = String(data: data, encoding: .utf8) else { continue }
-
-            var messages = 0
-            var userMessages = 0
-            var toolCalls = 0
-            for line in content.components(separatedBy: .newlines) where !line.isEmpty {
-                if line.contains("\"type\":\"user\"") && !line.contains("\"tool_result\"") {
-                    // User message (not a tool result)
-                    if line.contains("\"userType\":\"external\"") && !line.contains("\"isSidechain\":true") {
-                        userMessages += 1
-                    }
-                    messages += 1
-                } else if line.contains("\"type\":\"assistant\"") {
-                    messages += 1
-                    let toolCount = line.components(separatedBy: "\"type\":\"tool_use\"").count - 1
-                    toolCalls += toolCount
-                }
+            if fm.fileExists(atPath: path) {
+                transcriptPaths[sessionId] = path
+                return path
             }
-            return (messages, userMessages, toolCalls)
         }
-        return (0, 0, 0)
+        return nil
     }
 
     private func dateString(for date: Date) -> String {
@@ -365,6 +381,41 @@ final class UsageDataService: ObservableObject {
             resetText: "Resets \(limits.sevenDay.timeUntilReset)",
             currentLevel: sevenDayAlertLevel
         )
+    }
+
+    private func updateBurnRate() {
+        let now = Date()
+        var costs: [String: Double] = [:]
+        for s in sessions {
+            if let id = s.sessionId, let cost = s.cost?.totalCostUsd {
+                costs[id] = max(costs[id] ?? 0, cost)
+            }
+        }
+        let fiveHour = rateLimits?.fiveHour
+        burnTracker.record(at: now, fiveHour: fiveHour, sessionCosts: costs)
+        burnRate = burnTracker.snapshot(at: now, fiveHour: fiveHour)
+    }
+
+    // Notify once per session when its transcript passes the large threshold.
+    // Huge transcripts slow Claude Code and anything that reads them.
+    private func checkLargeTranscripts() {
+        for (sessionId, counts) in transcriptStats where counts.bytes >= Self.largeTranscriptBytes {
+            guard !largeTranscriptAlerted.contains(sessionId) else { continue }
+            largeTranscriptAlerted.insert(sessionId)
+            let project = sessions.first { $0.sessionId == sessionId }?.cwd
+                .map { URL(fileURLWithPath: $0).lastPathComponent } ?? "a session"
+            sendNotification(
+                title: "Large Claude session",
+                body: "Transcript for \(project) is \(Self.formatBytes(counts.bytes)). Consider starting a fresh session."
+            )
+        }
+    }
+
+    static func formatBytes(_ bytes: UInt64) -> String {
+        let mb = Double(bytes) / 1_000_000
+        if mb >= 1000 { return String(format: "%.1f GB", mb / 1000) }
+        if mb >= 10 { return String(format: "%.0f MB", mb) }
+        return String(format: "%.1f MB", mb)
     }
 
     private func evaluateAlert(windowLabel: String, percentage: Int, resetText: String, currentLevel: AlertLevel) -> AlertLevel {

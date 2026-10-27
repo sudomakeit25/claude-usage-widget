@@ -89,9 +89,15 @@ struct MenuBarView: View {
                 subtitle: "5-hour window",
                 percentage: limits.fiveHour.effectivePercentage,
                 resetText: resetText(prefix: "Resets in", window: limits.fiveHour),
-                projection: limits.fiveHour.projectionText(windowSeconds: 5 * 3600),
+                // The pace line carries the forecast once the recent rate is
+                // known; until then fall back to the whole-window average
+                projection: service.burnRate?.projectedAtReset == nil
+                    ? limits.fiveHour.projectionText(windowSeconds: 5 * 3600) : nil,
                 gradient: [.orange, .red]
             )
+            if let pace = service.burnRate, !limits.fiveHour.hasReset {
+                paceRow(pace)
+            }
             rateLimitRow(
                 title: "All models",
                 subtitle: "7-day window",
@@ -100,6 +106,37 @@ struct MenuBarView: View {
                 projection: limits.sevenDay.projectionText(windowSeconds: 7 * 86400),
                 gradient: [.blue, .purple]
             )
+        }
+    }
+
+    // Recent pace over the last 30 minutes, from BurnRateTracker
+    @ViewBuilder
+    private func paceRow(_ pace: BurnRateTracker.Snapshot) -> some View {
+        if pace.percentPerHour != nil || pace.costPerHour != nil {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Image(systemName: "speedometer").font(.system(size: 9)).foregroundStyle(.secondary)
+                    if let pct = pace.percentPerHour {
+                        Text(String(format: "%.0f%%/h", pct))
+                            .font(.system(.caption2, design: .monospaced).weight(.medium))
+                    }
+                    if let cost = pace.costPerHour {
+                        Text(String(format: "$%.2f/h", cost))
+                            .font(.system(.caption2, design: .monospaced).weight(.medium))
+                            .foregroundStyle(.orange)
+                    }
+                    Text("last 30 min").font(.caption2).foregroundStyle(.tertiary)
+                }
+                if let limitAt = pace.limitAt {
+                    Text("Hits 100% at \(formatTime(limitAt)) at this pace")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                } else if let projected = pace.projectedAtReset {
+                    Text("Projected \(Int(projected.rounded()))% at reset at this pace")
+                        .font(.caption2)
+                        .foregroundStyle(projected >= 80 ? Color.orange : .secondary)
+                }
+            }
         }
     }
 
@@ -181,6 +218,9 @@ struct MenuBarView: View {
                     Text(shortenPath(cwd)).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
             }
+            if let id = data.sessionId, let stats = service.transcriptStats[id] {
+                transcriptRow(stats)
+            }
             if let cost = data.cost {
                 HStack {
                     Text("API equiv.")
@@ -204,6 +244,58 @@ struct MenuBarView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.08)))
     }
 
+    private func transcriptRow(_ stats: TranscriptCounter.Counts) -> some View {
+        let color: Color = stats.bytes >= UsageDataService.hugeTranscriptBytes ? .red
+            : stats.bytes >= UsageDataService.largeTranscriptBytes ? .orange : .secondary
+        return HStack(spacing: 4) {
+            Image(systemName: stats.bytes >= UsageDataService.largeTranscriptBytes ? "exclamationmark.triangle.fill" : "doc.text")
+                .font(.system(size: 9))
+                .foregroundStyle(color)
+            Text("log \(UsageDataService.formatBytes(stats.bytes))")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(color)
+            Spacer()
+            if let hit = stats.tokens.cacheHitRate {
+                Text("cache \(Int((hit * 100).rounded()))%")
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(cacheHitColor(hit))
+            }
+        }
+    }
+
+    private func cacheHitColor(_ rate: Double) -> Color {
+        rate >= 0.8 ? .green : rate >= 0.5 ? .orange : .red
+    }
+
+    // Cache hit rate across all sessions for the days that match
+    private func cacheHitRate(days include: (String) -> Bool) -> Double? {
+        var tokens = DayTokens()
+        for s in sessionService.allSessions {
+            for (day, t) in s.dailyTokens where include(day) {
+                tokens += t
+            }
+        }
+        return tokens.cacheHitRate
+    }
+
+    @ViewBuilder
+    private func cacheHitCaption(_ rate: Double?) -> some View {
+        if let rate {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 9)).foregroundStyle(cacheHitColor(rate))
+                Text("Cache hit \(Int((rate * 100).rounded()))% of prompt tokens")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func dayKey(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: date)
+    }
+
     // MARK: - Today
 
     private var todaySection: some View {
@@ -216,6 +308,8 @@ struct MenuBarView: View {
                 ColorStatBadge(icon: "hammer.fill", value: "\(service.summary.todayToolCalls)", label: "Tools", color: .orange)
                 ColorStatBadge(icon: "number", value: formatTokens(service.summary.todayTokens), label: "Tokens", color: .cyan)
             }
+            let today = dayKey(Date())
+            cacheHitCaption(cacheHitRate { $0 == today })
         }
     }
 
@@ -230,6 +324,8 @@ struct MenuBarView: View {
                 ColorStatBadge(icon: "terminal.fill", value: "\(service.summary.weekSessions)", label: "Sessions", color: .green)
                 ColorStatBadge(icon: "number", value: formatTokens(service.summary.weekTokens), label: "Tokens", color: .cyan)
             }
+            let weekAgo = dayKey(Date().addingTimeInterval(-7 * 86400))
+            cacheHitCaption(cacheHitRate { $0 >= weekAgo && $0 != "unknown" })
         }
     }
 
@@ -244,6 +340,8 @@ struct MenuBarView: View {
                 ColorStatBadge(icon: "terminal.fill", value: "\(stats.sessions)", label: "Sessions", color: .green)
                 ColorStatBadge(icon: "number", value: formatTokens(stats.tokens), label: "Tokens", color: .cyan)
             }
+            let monthPrefix = String(dayKey(Date()).prefix(7))
+            cacheHitCaption(cacheHitRate { $0.hasPrefix(monthPrefix) })
         }
     }
 

@@ -116,6 +116,7 @@ final class SessionListService: ObservableObject {
     private let bookmarksPath: String
     private let pinsPath: String
     private let titlesPath: String
+    private let usageScanner = TranscriptUsageScanner()
     private var bookmarks: Set<String> = []
     private var pins: Set<String> = []
     private var titles: [String: String] = [:]
@@ -134,6 +135,9 @@ final class SessionListService: ObservableObject {
     }
 
     func loadAll() {
+        // Transcript usage is cached per file, so reloading only reads what
+        // changed; skip if a load is already running
+        guard !isLoading else { return }
         isLoading = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
@@ -521,62 +525,12 @@ final class SessionListService: ObservableObject {
         return String(components.last ?? "Unknown")
     }
 
-    // Scan a transcript JSONL for usage data, broken down by day and by
-    // model. Each transcript line carries a timestamp and the model that
-    // produced the message, so we can bin per-message tokens to both axes.
+    // Usage for a transcript, broken down by day and by model. Each transcript
+    // line carries a timestamp and the model that produced the message, so
+    // per-message tokens bin to both axes.
     private func parseTranscriptUsage(at path: String) -> (perDay: [String: DayTokens], perModel: [String: DayTokens], total: DayTokens) {
-        guard let data = FileManager.default.contents(atPath: path),
-              let text = String(data: data, encoding: .utf8) else { return ([:], [:], DayTokens()) }
-
-        var perDay: [String: DayTokens] = [:]
-        var perModel: [String: DayTokens] = [:]
-        var total = DayTokens()
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let dayFormatter = DateFormatter()
-        dayFormatter.dateFormat = "yyyy-MM-dd"
-        dayFormatter.timeZone = TimeZone.current
-
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard let lineData = line.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                  let msg = json["message"] as? [String: Any],
-                  let usage = msg["usage"] as? [String: Any] else { continue }
-
-            let input       = (usage["input_tokens"] as? Int) ?? 0
-            let output      = (usage["output_tokens"] as? Int) ?? 0
-            let cacheRead   = (usage["cache_read_input_tokens"] as? Int) ?? 0
-            let cacheCreate = (usage["cache_creation_input_tokens"] as? Int) ?? 0
-
-            total.input += input
-            total.output += output
-            total.cacheRead += cacheRead
-            total.cacheCreate += cacheCreate
-
-            // Bin to local day (fallback to "unknown" if timestamp missing)
-            let dayKey: String
-            if let ts = json["timestamp"] as? String, let date = isoFormatter.date(from: ts) {
-                dayKey = dayFormatter.string(from: date)
-            } else {
-                dayKey = "unknown"
-            }
-            var dayBucket = perDay[dayKey] ?? DayTokens()
-            dayBucket.input += input
-            dayBucket.output += output
-            dayBucket.cacheRead += cacheRead
-            dayBucket.cacheCreate += cacheCreate
-            perDay[dayKey] = dayBucket
-
-            // Bin by model
-            let modelKey = (msg["model"] as? String) ?? "unknown"
-            var modelBucket = perModel[modelKey] ?? DayTokens()
-            modelBucket.input += input
-            modelBucket.output += output
-            modelBucket.cacheRead += cacheRead
-            modelBucket.cacheCreate += cacheCreate
-            perModel[modelKey] = modelBucket
-        }
-        return (perDay, perModel, total)
+        let usage = usageScanner.usage(atPath: path)
+        return (usage.perDay, usage.perModel, usage.total)
     }
 
     private func findTranscript(sessionId: String, projectPath: String) -> String? {
