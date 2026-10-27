@@ -1,5 +1,8 @@
 import Foundation
 import UserNotifications
+import os
+
+private let pollLog = Logger(subsystem: "com.local.claude-usage", category: "ratelimits")
 
 final class UsageDataService: ObservableObject {
     // Live session data
@@ -64,13 +67,15 @@ final class UsageDataService: ObservableObject {
         do {
             let creds = try KeychainCredentials.load()
             let polled = try await apiClient.pingForRateLimits(accessToken: creds.accessToken)
+            pollLog.info("Polled rate limits: 5h=\(Int(polled.fiveHourPercent.rounded()), privacy: .public)% 7d=\(Int(polled.sevenDayPercent.rounded()), privacy: .public)%")
             await MainActor.run {
                 self.polledRateLimits = polled
                 self.checkAlerts()
             }
         } catch {
-            // Silent failure: keychain may need user approval on first launch,
-            // or network may be unavailable. Statusline data is still used.
+            // Keychain read or network failure. Statusline data is still used.
+            // Inspect with: log show --predicate 'subsystem == "com.local.claude-usage"' --last 1h
+            pollLog.error("Rate-limit poll failed: \(String(describing: error), privacy: .public)")
         }
     }
 
