@@ -36,6 +36,9 @@ struct SessionInfo: Identifiable, Hashable {
     // Per-model token usage. Lets the cost-by-model chart use transcript
     // data instead of the often-stale stats-cache.
     var modelTokens: [String: DayTokens] = [:]
+    // Per-model, per-day token usage. Lets the model timeline show the days
+    // each model was in use.
+    var modelDailyTokens: [String: [String: DayTokens]] = [:]
     let linesAdded: Int
     let linesRemoved: Int
     let transcriptPath: String?
@@ -228,21 +231,18 @@ final class SessionListService: ObservableObject {
             let transcriptPath = findTranscript(sessionId: sessionId, projectPath: projectPath)
 
             // Parse transcript for accurate token usage including cache reads and per-day/per-model breakdown
-            let perDay: [String: DayTokens]
-            let perModel: [String: DayTokens]
-            let total: DayTokens
+            var usage = TranscriptUsageScanner.Usage()
             if let tp = transcriptPath {
-                (perDay, perModel, total) = parseTranscriptUsage(at: tp)
+                usage = parseTranscriptUsage(at: tp)
             } else {
-                perDay = [:]
-                perModel = [:]
-                total = DayTokens(
+                usage.total = DayTokens(
                     input: status.contextWindow?.totalInputTokens ?? 0,
                     output: status.contextWindow?.totalOutputTokens ?? 0,
                     cacheRead: 0,
                     cacheCreate: 0
                 )
             }
+            let total = usage.total
 
             sessions.append(SessionInfo(
                 sessionId: sessionId,
@@ -258,8 +258,9 @@ final class SessionListService: ObservableObject {
                 outputTokens: total.output,
                 cacheReadTokens: total.cacheRead,
                 cacheCreationTokens: total.cacheCreate,
-                dailyTokens: perDay,
-                modelTokens: perModel,
+                dailyTokens: usage.perDay,
+                modelTokens: usage.perModel,
+                modelDailyTokens: usage.perModelDay,
                 linesAdded: status.cost?.totalLinesAdded ?? 0,
                 linesRemoved: status.cost?.totalLinesRemoved ?? 0,
                 transcriptPath: transcriptPath
@@ -469,16 +470,13 @@ final class SessionListService: ObservableObject {
 
             // Get cache token counts and per-day/per-model breakdowns by
             // parsing the transcript (session-meta has neither)
-            let perDay: [String: DayTokens]
-            let perModel: [String: DayTokens]
-            let total: DayTokens
+            var usage = TranscriptUsageScanner.Usage()
             if let tp = transcriptPath {
-                (perDay, perModel, total) = parseTranscriptUsage(at: tp)
+                usage = parseTranscriptUsage(at: tp)
             } else {
-                perDay = [:]
-                perModel = [:]
-                total = DayTokens(input: meta.inputTokens, output: meta.outputTokens, cacheRead: 0, cacheCreate: 0)
+                usage.total = DayTokens(input: meta.inputTokens, output: meta.outputTokens, cacheRead: 0, cacheCreate: 0)
             }
+            let total = usage.total
 
             sessions.append(SessionInfo(
                 sessionId: meta.sessionId,
@@ -494,8 +492,9 @@ final class SessionListService: ObservableObject {
                 outputTokens: max(total.output, meta.outputTokens),
                 cacheReadTokens: total.cacheRead,
                 cacheCreationTokens: total.cacheCreate,
-                dailyTokens: perDay,
-                modelTokens: perModel,
+                dailyTokens: usage.perDay,
+                modelTokens: usage.perModel,
+                modelDailyTokens: usage.perModelDay,
                 linesAdded: meta.linesAdded ?? 0,
                 linesRemoved: meta.linesRemoved ?? 0,
                 transcriptPath: transcriptPath
@@ -528,9 +527,8 @@ final class SessionListService: ObservableObject {
     // Usage for a transcript, broken down by day and by model. Each transcript
     // line carries a timestamp and the model that produced the message, so
     // per-message tokens bin to both axes.
-    private func parseTranscriptUsage(at path: String) -> (perDay: [String: DayTokens], perModel: [String: DayTokens], total: DayTokens) {
-        let usage = usageScanner.usage(atPath: path)
-        return (usage.perDay, usage.perModel, usage.total)
+    private func parseTranscriptUsage(at path: String) -> TranscriptUsageScanner.Usage {
+        usageScanner.usage(atPath: path)
     }
 
     private func findTranscript(sessionId: String, projectPath: String) -> String? {

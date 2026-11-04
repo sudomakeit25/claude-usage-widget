@@ -7,6 +7,8 @@ final class TranscriptUsageScanner {
     struct Usage: Equatable {
         var perDay: [String: DayTokens] = [:]
         var perModel: [String: DayTokens] = [:]
+        // model -> day -> tokens, for when each model was in use
+        var perModelDay: [String: [String: DayTokens]] = [:]
         var total = DayTokens()
     }
 
@@ -85,6 +87,8 @@ final class TranscriptUsageScanner {
         }
         usage.total += parsed.tokens
         usage.perDay[dayKey, default: DayTokens()] += parsed.tokens
-        usage.perModel[parsed.model ?? "unknown", default: DayTokens()] += parsed.tokens
+        let model = parsed.model ?? "unknown"
+        usage.perModel[model, default: DayTokens()] += parsed.tokens
+        usage.perModelDay[model, default: [:]][dayKey, default: DayTokens()] += parsed.tokens
     }
 }

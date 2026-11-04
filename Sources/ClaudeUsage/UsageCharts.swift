@@ -106,7 +106,12 @@ struct UsageChartsView: View {
                 costByModelChart
             }
 
-            // Row 8: Monthly cost (full width)
+            // Row 8: When each model was in use (full width)
+            chartCard("Model Timeline") {
+                modelTimelineChart
+            }
+
+            // Row 9: Monthly cost (full width)
             chartCard("Monthly Cost") {
                 monthlyCostChart
             }
@@ -406,13 +411,16 @@ struct UsageChartsView: View {
     }
 
     private func prettyModelName(_ id: String) -> String {
-        // Convert "claude-opus-4-6-20251015" -> "Opus 4.6"
+        // Convert "claude-opus-4-6-20251015" -> "Opus 4.6", "claude-fable-5" -> "Fable 5"
         let parts = id.split(separator: "-")
-        guard parts.count >= 4 else { return id }
+        guard parts.count >= 3, parts[0] == "claude" else { return id }
         let family = parts[1].capitalized
         let major = parts[2]
-        let minor = parts[3]
-        return "\(family) \(major).\(minor)"
+        // A date suffix is not a minor version
+        if parts.count >= 4, parts[3].count <= 2 {
+            return "\(family) \(major).\(parts[3])"
+        }
+        return "\(family) \(major)"
     }
 
     // MARK: - Monthly Cost
@@ -508,6 +516,112 @@ struct UsageChartsView: View {
                 Text("No model cost data in stats-cache.json").font(.caption).foregroundStyle(.tertiary)
             }
         }
+    }
+
+    // MARK: - Model Timeline
+
+    // One row per model: a bar from the first to the last day it produced
+    // tokens, with a dot on each day it was actually used, so gaps show.
+    private var modelTimelineChart: some View {
+        let data = modelTimeline
+        let cal = Calendar.current
+        return Group {
+            if !data.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Chart {
+                        ForEach(data, id: \.model) { item in
+                            BarMark(
+                                xStart: .value("First used", item.firstDay),
+                                xEnd: .value("Last used", cal.date(byAdding: .day, value: 1, to: item.lastDay) ?? item.lastDay),
+                                y: .value("Model", item.model),
+                                height: 6
+                            )
+                            .foregroundStyle(by: .value("Model", item.model))
+                            .opacity(0.35)
+                            .cornerRadius(3)
+                            ForEach(item.activeDays, id: \.self) { day in
+                                PointMark(
+                                    x: .value("Day", cal.date(byAdding: .hour, value: 12, to: day) ?? day),
+                                    y: .value("Model", item.model)
+                                )
+                                .foregroundStyle(by: .value("Model", item.model))
+                                .symbolSize(18)
+                            }
+                        }
+                    }
+                    .chartForegroundStyleScale(domain: data.map(\.model), range: modelTimelineColors(data.map(\.model)))
+                    .chartLegend(.hidden)
+                    .chartXAxis { AxisMarks(values: .automatic(desiredCount: 8)) { _ in AxisGridLine(); AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
+                    // Room for the last date label, which otherwise truncates at the edge
+                    .chartPlotStyle { $0.padding(.trailing, 24) }
+                    .frame(height: max(80, CGFloat(data.count) * 28 + 24))
+
+                    ForEach(data, id: \.model) { item in
+                        HStack(spacing: 8) {
+                            Text(item.model).font(.caption.weight(.medium)).frame(width: 110, alignment: .leading)
+                            Text("\(formatDay(item.firstDay)) to \(formatDay(item.lastDay))")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(item.activeDays.count) active day\(item.activeDays.count == 1 ? "" : "s")")
+                                .font(.system(.caption2, design: .monospaced)).foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            } else {
+                Text("No per-model transcript data").font(.caption).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    // One hue per model family, with shades spread across the family's
+    // models in timeline order, so colors never repeat across families.
+    private func modelTimelineColors(_ models: [String]) -> [Color] {
+        func hue(_ model: String) -> Double {
+            let m = model.lowercased()
+            if m.contains("opus") { return 0.60 }
+            if m.contains("fable") { return 0.80 }
+            if m.contains("sonnet") { return 0.36 }
+            if m.contains("haiku") { return 0.48 }
+            return 0.08
+        }
+        var seen: [Double: Int] = [:]
+        let index = models.map { m -> Int in
+            let h = hue(m)
+            defer { seen[h, default: 0] += 1 }
+            return seen[h] ?? 0
+        }
+        return zip(models, index).map { m, i in
+            let h = hue(m)
+            let n = max(1, (seen[h] ?? 1) - 1)
+            let t = Double(i) / Double(n)
+            return Color(hue: h + (t - 0.5) * 0.06, saturation: 0.85 - t * 0.35, brightness: 0.65 + t * 0.35)
+        }
+    }
+
+    private struct ModelTimelineItem { let model: String; let firstDay: Date; let lastDay: Date; let activeDays: [Date] }
+
+    private var modelTimeline: [ModelTimelineItem] {
+        let dayFmt = DateFormatter()
+        dayFmt.dateFormat = "yyyy-MM-dd"
+        dayFmt.timeZone = TimeZone.current
+        let cal = Calendar.current
+
+        // Group by display name so dated ids of one model share a row
+        var days: [String: Set<Date>] = [:]
+        for s in sessions {
+            for (model, perDay) in s.modelDailyTokens where model != "unknown" && !model.hasPrefix("<") {
+                for (dayKey, t) in perDay where t.input + t.output + t.cacheRead + t.cacheCreate > 0 {
+                    guard let date = dayFmt.date(from: dayKey) else { continue }
+                    days[prettyModelName(model), default: []].insert(cal.startOfDay(for: date))
+                }
+            }
+        }
+        return days.compactMap { model, set -> ModelTimelineItem? in
+            let sorted = set.sorted()
+            guard let first = sorted.first, let last = sorted.last else { return nil }
+            return ModelTimelineItem(model: model, firstDay: first, lastDay: last, activeDays: sorted)
+        }
+        .sorted { ($0.firstDay, $0.model) < ($1.firstDay, $1.model) }
     }
 
     // MARK: - Avg Session Duration Over Time

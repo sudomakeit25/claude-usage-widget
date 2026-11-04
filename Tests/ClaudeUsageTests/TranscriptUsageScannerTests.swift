@@ -19,6 +19,26 @@ final class TranscriptUsageScannerTests: TranscriptTestCase {
         XCTAssertEqual(usage.total, DayTokens(input: 20, output: 40, cacheRead: 1800, cacheCreate: 180))
         XCTAssertEqual(usage.perDay, ["2026-10-26": one, "2026-10-27": one])
         XCTAssertEqual(usage.perModel, ["claude-opus-5-5": one, "claude-sonnet-5-5": one])
+        XCTAssertEqual(usage.perModelDay, ["claude-opus-5-5": ["2026-10-26": one], "claude-sonnet-5-5": ["2026-10-27": one]])
+    }
+
+    func testPerModelDayTracksFirstAndLastDayOfEachModel() throws {
+        // Lines out of date order, a model switch and back, and a repeat id
+        let text = [
+            Lines.assistant(id: "c", timestamp: "2026-10-30T10:00:00.000Z"),
+            Lines.assistant(id: "a", timestamp: "2026-10-01T10:00:00.000Z"),
+            Lines.assistant(id: "b", model: "claude-fable-5-1", timestamp: "2026-10-15T10:00:00.000Z"),
+            Lines.assistant(id: "b", model: "claude-fable-5-1", timestamp: "2026-10-15T10:00:00.000Z"),
+            Lines.assistant(id: "d", timestamp: "2026-10-15T11:00:00.000Z"),
+        ].joined(separator: "\n") + "\n"
+        let path = try write(text)
+        let usage = TranscriptUsageScanner(timeZone: utc).usage(atPath: path)
+
+        XCTAssertEqual(usage.perModelDay["claude-opus-5-5"]?.keys.sorted(), ["2026-10-01", "2026-10-15", "2026-10-30"])
+        XCTAssertEqual(usage.perModelDay["claude-fable-5-1"], ["2026-10-15": DayTokens(input: 10, output: 20, cacheRead: 900, cacheCreate: 90)])
+        // Every token in perModelDay is also in the totals, and only once
+        let summed = usage.perModelDay.values.flatMap(\.values).reduce(into: DayTokens()) { $0 += $1 }
+        XCTAssertEqual(summed, usage.total)
     }
 
     func testSameIdNonConsecutiveIsCountedAgain() throws {
@@ -35,6 +55,7 @@ final class TranscriptUsageScannerTests: TranscriptTestCase {
         let usage = TranscriptUsageScanner().usage(atPath: path)
         XCTAssertEqual(usage.perDay["unknown"]?.input, 5)
         XCTAssertEqual(usage.perModel["unknown"]?.input, 5)
+        XCTAssertEqual(usage.perModelDay["unknown"]?["unknown"]?.input, 5)
     }
 
     func testEmptyMissingAndMalformed() throws {
