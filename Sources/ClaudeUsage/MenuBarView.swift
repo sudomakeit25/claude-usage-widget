@@ -395,7 +395,10 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 6) {
             sectionHeader("Models", icon: "cpu.fill", color: .cyan)
             ForEach(
-                service.summary.modelBreakdown.sorted(by: { $0.value.outputTokens > $1.value.outputTokens }),
+                // Sort by the number shown
+                service.summary.modelBreakdown.sorted(by: {
+                    $0.value.inputTokens + $0.value.outputTokens > $1.value.inputTokens + $1.value.outputTokens
+                }),
                 id: \.key
             ) { model, usage in
                 HStack {
@@ -512,16 +515,12 @@ struct MenuBarView: View {
     }
 
     private func shortModelName(_ name: String) -> String {
-        if name.contains("opus-4-6") { return "Opus 4.6" }
-        if name.contains("opus-4-5") { return "Opus 4.5" }
-        if name.contains("sonnet-4-6") { return "Sonnet 4.6" }
-        if name.contains("sonnet-4-5") { return "Sonnet 4.5" }
-        if name.contains("haiku-4-5") { return "Haiku 4.5" }
-        return name
+        ModelName.short(name)
     }
 
     private func modelColor(_ name: String) -> Color {
         if name.contains("opus") { return .purple }
+        if name.contains("fable") { return .pink }
         if name.contains("sonnet") { return .blue }
         if name.contains("haiku") { return .green }
         return .gray

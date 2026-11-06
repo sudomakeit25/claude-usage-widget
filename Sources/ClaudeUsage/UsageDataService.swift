@@ -35,6 +35,7 @@ final class UsageDataService: ObservableObject {
     // Only touched from refresh passes, which never overlap
     private let transcriptCounter = TranscriptCounter()
     private var transcriptPaths: [String: String] = [:]
+    private lazy var modelTotals = ModelUsageTotals(projectsDir: "\(claudeDir)/projects")
 
     private let staleThreshold: TimeInterval = 24 * 3600
 
@@ -318,10 +319,10 @@ final class UsageDataService: ObservableObject {
         }.sorted { $0.date < $1.date }
     }
 
-    // Merge live session models into the stats-cache model breakdown so
-    // models that appeared after the cache was computed still show up.
+    // stats-cache merged with transcript totals (see ModelUsageTotals), then
+    // live sessions for any model neither source has yet.
     private func mergedModelBreakdown(stats: StatsCache?, liveSessions: [StatusLineData]) -> [String: ModelUsage] {
-        var breakdown = stats?.modelUsage ?? [:]
+        var breakdown = ModelUsageTotals.merge(stats: stats?.modelUsage ?? [:], transcripts: modelTotals.transcriptTotals())
         for session in liveSessions {
             guard let modelId = session.model?.id else { continue }
             if breakdown[modelId] == nil {

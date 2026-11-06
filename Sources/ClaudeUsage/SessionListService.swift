@@ -63,11 +63,7 @@ struct SessionInfo: Identifiable, Hashable {
     // Short label like "Opus 4.7" or "Sonnet 4.6". Returns nil if no model
     // info is available so callers can hide the badge entirely.
     var shortModelName: String? {
-        guard let id = primaryModel else { return nil }
-        let parts = id.split(separator: "-")
-        guard parts.count >= 4 else { return id }
-        let family = parts[1].capitalized
-        return "\(family) \(parts[2]).\(parts[3])"
+        primaryModel.map(ModelName.short)
     }
 
     // Use live cost if available, otherwise estimate from tokens at Opus rates

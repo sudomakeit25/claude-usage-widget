@@ -411,16 +411,7 @@ struct UsageChartsView: View {
     }
 
     private func prettyModelName(_ id: String) -> String {
-        // Convert "claude-opus-4-6-20251015" -> "Opus 4.6", "claude-fable-5" -> "Fable 5"
-        let parts = id.split(separator: "-")
-        guard parts.count >= 3, parts[0] == "claude" else { return id }
-        let family = parts[1].capitalized
-        let major = parts[2]
-        // A date suffix is not a minor version
-        if parts.count >= 4, parts[3].count <= 2 {
-            return "\(family) \(major).\(parts[3])"
-        }
-        return "\(family) \(major)"
+        ModelName.short(id)
     }
 
     // MARK: - Monthly Cost
