@@ -10,7 +10,13 @@ final class ModelPricingTests: XCTestCase {
         XCTAssertEqual(ModelPricing.rates(for: "CLAUDE-FABLE-5-1"), ModelPricing.fable51)
         XCTAssertEqual(ModelPricing.rates(for: "claude-haiku-4-5-20251001"), ModelPricing.haiku)
         XCTAssertEqual(ModelPricing.rates(for: "claude-sonnet-4-6"), ModelPricing.sonnet)
-        XCTAssertEqual(ModelPricing.rates(for: "claude-opus-5-5"), ModelPricing.opus)
+        XCTAssertEqual(ModelPricing.rates(for: "claude-opus-5-5"), ModelPricing.opus55)
+        for id in ["claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5-20251101", "anthropic.Claude.Opus"] {
+            XCTAssertEqual(ModelPricing.rates(for: id), ModelPricing.opus, id)
+        }
+        for id in ["claude-opus-4-1-20250805", "claude-opus-4-0", "claude-opus-4-20250514", "claude-3-opus-20240229"] {
+            XCTAssertEqual(ModelPricing.rates(for: id), ModelPricing.opusLegacy, id)
+        }
         // Unknown and empty ids fall back to Opus; an unreleased Fable gets the newest Fable rates
         XCTAssertEqual(ModelPricing.rates(for: "anthropic.Polaris.Model.Smart.High"), ModelPricing.opus)
         XCTAssertEqual(ModelPricing.rates(for: ""), ModelPricing.opus)
@@ -22,6 +28,8 @@ final class ModelPricingTests: XCTestCase {
         XCTAssertEqual(ModelPricing.fable52.cost(t), 8 + 40 + 0.20 + 10, accuracy: 1e-9)
         XCTAssertEqual(ModelPricing.fable5.cost(t), 10 + 50 + 1 + 12.5, accuracy: 1e-9)
         XCTAssertEqual(ModelPricing.fable51.cost(DayTokens()), 0)
+        XCTAssertEqual(ModelPricing.opus55.cost(t), 4 + 20 + 0.20 + 5, accuracy: 1e-9)
+        XCTAssertEqual(ModelPricing.opus.cost(t), 5 + 25 + 0.50 + 6.25, accuracy: 1e-9)
     }
 
     private func session(model: [String: DayTokens] = [:], daily: [String: [String: DayTokens]] = [:],
@@ -34,9 +42,9 @@ final class ModelPricingTests: XCTestCase {
 
     func testSessionCostPricesEachModel() {
         let m = DayTokens(input: 1_000_000)
-        XCTAssertEqual(session(model: ["claude-fable-5-1": m, "claude-opus-5-5": m]).estimatedCost, 10 + 15, accuracy: 1e-9)
-        // No per-model data: whole session at Opus rates
-        XCTAssertEqual(session().estimatedCost, 15, accuracy: 1e-9)
+        XCTAssertEqual(session(model: ["claude-fable-5-1": m, "claude-opus-5-5": m]).estimatedCost, 10 + 4, accuracy: 1e-9)
+        // No per-model data: whole session at current Opus rates
+        XCTAssertEqual(session().estimatedCost, 5, accuracy: 1e-9)
         // Live cost from Claude Code wins
         XCTAssertEqual(session(model: ["claude-fable-5-1": m], live: 3).estimatedCost, 3)
     }
@@ -45,10 +53,10 @@ final class ModelPricingTests: XCTestCase {
         let m = DayTokens(input: 1_000_000)
         let s = session(daily: ["claude-fable-5-2": ["2026-11-01": m], "claude-opus-5-5": ["2026-11-01": m, "2026-11-02": m]],
                         dayTokens: ["2026-11-01": m, "2026-11-02": m])
-        XCTAssertEqual(s.dailyCost["2026-11-01"] ?? 0, 8 + 15, accuracy: 1e-9)
-        XCTAssertEqual(s.dailyCost["2026-11-02"] ?? 0, 15, accuracy: 1e-9)
-        // Without the per-model breakdown, days fall back to Opus rates
-        XCTAssertEqual(session(dayTokens: ["2026-11-01": m]).dailyCost, ["2026-11-01": 15])
+        XCTAssertEqual(s.dailyCost["2026-11-01"] ?? 0, 8 + 4, accuracy: 1e-9)
+        XCTAssertEqual(s.dailyCost["2026-11-02"] ?? 0, 4, accuracy: 1e-9)
+        // Without the per-model breakdown, days fall back to current Opus rates
+        XCTAssertEqual(session(dayTokens: ["2026-11-01": m]).dailyCost, ["2026-11-01": 5])
         XCTAssertTrue(session().dailyCost.isEmpty)
     }
 }

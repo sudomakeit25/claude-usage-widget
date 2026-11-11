@@ -6,7 +6,7 @@ struct DayTokens: Hashable {
     var cacheRead: Int = 0
     var cacheCreate: Int = 0
 
-    // Opus-rate estimate, for when the model is unknown
+    // Current Opus-rate estimate, for when the model is unknown
     var estimatedCost: Double { ModelPricing.opus.cost(self) }
 }
 
