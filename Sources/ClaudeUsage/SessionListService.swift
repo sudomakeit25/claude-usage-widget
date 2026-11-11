@@ -6,13 +6,8 @@ struct DayTokens: Hashable {
     var cacheRead: Int = 0
     var cacheCreate: Int = 0
 
-    // Opus-rate estimate
-    var estimatedCost: Double {
-        Double(input) * 15.0 / 1_000_000 +
-        Double(output) * 75.0 / 1_000_000 +
-        Double(cacheRead) * 1.50 / 1_000_000 +
-        Double(cacheCreate) * 18.75 / 1_000_000
-    }
+    // Opus-rate estimate, for when the model is unknown
+    var estimatedCost: Double { ModelPricing.opus.cost(self) }
 }
 
 struct SessionInfo: Identifiable, Hashable {
@@ -66,17 +61,17 @@ struct SessionInfo: Identifiable, Hashable {
         primaryModel.map(ModelName.short)
     }
 
-    // Use live cost if available, otherwise estimate from tokens at Opus rates
-    // ($15/M in, $75/M out, $1.50/M cache-read, $18.75/M cache-write). For
-    // long-running cache-heavy sessions, cache tokens dominate — without them
-    // the estimate is 10–100× low.
+    // Use live cost if available, otherwise price each model's tokens at its
+    // own rates (ModelPricing), or everything at Opus rates when there's no
+    // per-model breakdown. Cache tokens are included: for long-running
+    // cache-heavy sessions they dominate the cost.
     var estimatedCost: Double {
         if let live = liveCostUsd { return live }
-        let inputCost = Double(inputTokens) * 15.0 / 1_000_000
-        let outputCost = Double(outputTokens) * 75.0 / 1_000_000
-        let cacheReadCost = Double(cacheReadTokens) * 1.50 / 1_000_000
-        let cacheCreateCost = Double(cacheCreationTokens) * 18.75 / 1_000_000
-        return inputCost + outputCost + cacheReadCost + cacheCreateCost
+        if !modelTokens.isEmpty {
+            return modelTokens.reduce(0) { $0 + ModelPricing.rates(for: $1.key).cost($1.value) }
+        }
+        return ModelPricing.opus.cost(DayTokens(input: inputTokens, output: outputTokens,
+                                                cacheRead: cacheReadTokens, cacheCreate: cacheCreationTokens))
     }
 
     static func == (lhs: SessionInfo, rhs: SessionInfo) -> Bool {

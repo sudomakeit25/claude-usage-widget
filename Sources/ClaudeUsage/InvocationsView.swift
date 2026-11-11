@@ -15,19 +15,9 @@ struct Invocation: Identifiable, Hashable {
 
     // Opus rates by default. For known models, swap in the right rate.
     var cost: Double {
-        let rates = pricing(for: model)
-        return Double(inputTokens) * rates.input / 1_000_000 +
-               Double(outputTokens) * rates.output / 1_000_000 +
-               Double(cacheRead) * rates.cacheRead / 1_000_000 +
-               Double(cacheWrite) * rates.cacheWrite / 1_000_000
+        ModelPricing.rates(for: model).cost(DayTokens(input: inputTokens, output: outputTokens,
+                                                      cacheRead: cacheRead, cacheCreate: cacheWrite))
     }
-}
-
-private func pricing(for model: String) -> (input: Double, output: Double, cacheRead: Double, cacheWrite: Double) {
-    let id = model.lowercased()
-    if id.contains("haiku") { return (1.0, 5.0, 0.10, 1.25) }
-    if id.contains("sonnet") { return (3.0, 15.0, 0.30, 3.75) }
-    return (15.0, 75.0, 1.50, 18.75)
 }
 
 struct InvocationsView: View {

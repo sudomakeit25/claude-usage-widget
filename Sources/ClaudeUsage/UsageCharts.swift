@@ -381,34 +381,13 @@ struct UsageChartsView: View {
         }
         return byModel
             .map { id, t in
-                let rates = pricing(for: id)
-                let cost =
-                    Double(t.input) * rates.input / 1_000_000 +
-                    Double(t.output) * rates.output / 1_000_000 +
-                    Double(t.cacheRead) * rates.cacheRead / 1_000_000 +
-                    Double(t.cacheCreate) * rates.cacheWrite / 1_000_000
-                return ModelCostItem(model: prettyModelName(id), cost: cost)
+                ModelCostItem(model: prettyModelName(id), cost: ModelPricing.rates(for: id).cost(t))
             }
             .filter { $0.cost > 0 }
             .sorted { $0.cost > $1.cost }
     }
 
     private struct ModelCostItem { let model: String; let cost: Double }
-
-    private struct ModelRates { let input: Double; let output: Double; let cacheRead: Double; let cacheWrite: Double }
-
-    // $ per 1M tokens. Defaults to Opus pricing for unknown models.
-    private func pricing(for modelId: String) -> ModelRates {
-        let id = modelId.lowercased()
-        if id.contains("haiku") {
-            return ModelRates(input: 1.0, output: 5.0, cacheRead: 0.10, cacheWrite: 1.25)
-        }
-        if id.contains("sonnet") {
-            return ModelRates(input: 3.0, output: 15.0, cacheRead: 0.30, cacheWrite: 3.75)
-        }
-        // Opus (and fallback)
-        return ModelRates(input: 15.0, output: 75.0, cacheRead: 1.50, cacheWrite: 18.75)
-    }
 
     private func prettyModelName(_ id: String) -> String {
         ModelName.short(id)
@@ -423,10 +402,10 @@ struct UsageChartsView: View {
         var byMonth: [String: Double] = [:]
         for s in sessions {
             if !s.dailyTokens.isEmpty {
-                for (dayKey, tokens) in s.dailyTokens {
+                for (dayKey, cost) in s.dailyCost {
                     guard dayKey.count >= 7 else { continue }
                     let monthKey = String(dayKey.prefix(7))
-                    byMonth[monthKey, default: 0] += tokens.estimatedCost
+                    byMonth[monthKey, default: 0] += cost
                 }
             } else {
                 // Fallback: attribute to session start month
@@ -701,10 +680,10 @@ struct UsageChartsView: View {
 
         for s in sessions {
             if !s.dailyTokens.isEmpty {
-                for (dayKey, tokens) in s.dailyTokens {
+                for (dayKey, cost) in s.dailyCost {
                     guard dayKey != "unknown" else { continue }
                     var entry = bucket[dayKey] ?? (0, [])
-                    entry.cost += tokens.estimatedCost
+                    entry.cost += cost
                     if !entry.sessions.contains(s) { entry.sessions.append(s) }
                     bucket[dayKey] = entry
                 }

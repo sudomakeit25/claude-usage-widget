@@ -360,8 +360,9 @@ struct MenuBarView: View {
         for s in sessionService.allSessions {
             var sessionContributedThisMonth = false
             if !s.dailyTokens.isEmpty {
+                let dayCosts = s.dailyCost
                 for (dayKey, t) in s.dailyTokens where dayKey.hasPrefix(monthPrefix) {
-                    cost += t.estimatedCost
+                    cost += dayCosts[dayKey] ?? t.estimatedCost
                     tokens += t.input + t.output + t.cacheRead + t.cacheCreate
                     sessionContributedThisMonth = true
                 }
