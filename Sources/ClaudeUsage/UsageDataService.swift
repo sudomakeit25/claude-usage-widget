@@ -122,20 +122,11 @@ final class UsageDataService: ObservableObject {
         }
     }
 
-    // Rate limits, in preference order:
-    //   1. Polled data from Anthropic API (always fresh, ground truth)
-    //   2. Live session statusline with non-expired 5h window (fresh local data)
-    //   3. Any session with rate-limit data (stale, but better than nothing)
+    // Rate limits: per window, the highest unexpired reading across the API
+    // poll (up to 5 min old) and live session statuslines (updated every
+    // turn). The poll alone lagged ~10 points behind during heavy use.
     var rateLimits: RateLimits? {
-        if let polled = polledRateLimits {
-            return polled.toRateLimits()
-        }
-        let all = sessions.compactMap(\.rateLimits)
-        let fresh = all.filter { !$0.fiveHour.hasReset }
-        if let pick = fresh.max(by: { $0.fiveHour.usedPercentage < $1.fiveHour.usedPercentage }) {
-            return pick
-        }
-        return all.max(by: { $0.sevenDay.usedPercentage < $1.sevenDay.usedPercentage })
+        RateLimits.freshest(polled: polledRateLimits?.toRateLimits(), statusline: sessions.compactMap(\.rateLimits))
     }
 
     // Track which session file was modified most recently

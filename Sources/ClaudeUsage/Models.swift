@@ -84,6 +84,23 @@ struct RateLimits: Codable {
         case fiveHour = "five_hour"
         case sevenDay = "seven_day"
     }
+
+    /// The most current reading of each window across the API poll (every
+    /// 5 min) and live statuslines (every turn). Within one window usage only
+    /// goes up, so the highest unexpired reading is the newest; picking it
+    /// per window keeps a stale poll from hiding a fast burn.
+    static func freshest(polled: RateLimits?, statusline: [RateLimits], now: Date = Date()) -> RateLimits? {
+        let all = (polled.map { [$0] } ?? []) + statusline
+        func pick(_ window: (RateLimits) -> RateWindow) -> RateWindow? {
+            let windows = all.map(window)
+            let live = windows.filter { TimeInterval($0.resetsAt) > now.timeIntervalSince1970 }
+            if let best = live.max(by: { $0.usedPercentage < $1.usedPercentage }) { return best }
+            // All expired: the latest one, which reads as 0% once reset
+            return windows.max(by: { $0.resetsAt < $1.resetsAt })
+        }
+        guard let fiveHour = pick(\.fiveHour), let sevenDay = pick(\.sevenDay) else { return nil }
+        return RateLimits(fiveHour: fiveHour, sevenDay: sevenDay)
+    }
 }
 
 struct RateWindow: Codable {
